@@ -341,6 +341,287 @@ function normalizeObjectIdInput(value) {
   return { provided: true, error: 'invalid_object_id' };
 }
 
+function normalizeIdString(value) {
+  if (value instanceof ObjectId) return value.toHexString();
+  if (value && typeof value === 'object' && typeof value.toHexString === 'function') {
+    return value.toHexString();
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed.length) return null;
+    if (ObjectId.isValid(trimmed)) return new ObjectId(trimmed).toHexString();
+    return trimmed;
+  }
+  return null;
+}
+
+function getAppUserObjectId(req) {
+  if (!req) return null;
+  const candidates = [];
+  if (req.appUser) {
+    candidates.push(req.appUser._id, req.appUser.id, req.appUser.userId);
+  }
+  if (req.user) {
+    candidates.push(req.user._id, req.user.id, req.user.sub);
+  }
+  if (req.firebaseUser) {
+    candidates.push(req.firebaseUser.uid);
+  }
+  for (const candidate of candidates) {
+    const oid = coerceObjectId(candidate);
+    if (oid) return oid;
+  }
+  return null;
+}
+
+function extractUserName(user) {
+  if (!user || typeof user !== 'object') return null;
+  if (typeof user.name === 'string' && user.name.trim().length) {
+    return user.name.trim();
+  }
+  const profile = user.profile && typeof user.profile === 'object' ? user.profile : null;
+  if (profile) {
+    if (typeof profile.fullName === 'string' && profile.fullName.trim().length) {
+      return profile.fullName.trim();
+    }
+    if (typeof profile.name === 'string' && profile.name.trim().length) {
+      return profile.name.trim();
+    }
+  }
+  return null;
+}
+
+function shapeAuthUser(userDoc) {
+  if (!userDoc || typeof userDoc !== 'object') return null;
+  const dateOfBirth = userDoc.dateOfBirth ?? userDoc.birthday ?? null;
+  const shaped = {
+    _id: normalizeIdString(userDoc._id),
+    id: normalizeIdString(userDoc._id),
+    email: typeof userDoc.email === 'string' ? userDoc.email : null,
+    role: typeof userDoc.role === 'string' ? userDoc.role : 'customer',
+    status: typeof userDoc.status === 'string' ? userDoc.status : 'active',
+    name: extractUserName(userDoc),
+    phone: typeof userDoc.phone === 'string' ? userDoc.phone : null,
+    facilityId: normalizeIdString(userDoc.facilityId),
+    gender: typeof userDoc.gender === 'string' ? userDoc.gender : null,
+    dateOfBirth,
+    mainSportId: normalizeIdString(userDoc.mainSportId),
+    createdAt: userDoc.createdAt ?? null,
+    updatedAt: userDoc.updatedAt ?? null,
+  };
+  if (!shaped.email && isSyntheticStaffEmail(userDoc.email)) {
+    shaped.syntheticEmail = true;
+  }
+  return shaped;
+}
+
+function shapeUserProfile(userDoc) {
+  const shaped = shapeAuthUser(userDoc);
+  if (!shaped) return null;
+  return {
+    id: shaped.id,
+    _id: shaped._id,
+    email: shaped.email,
+    name: shaped.name,
+    phone: shaped.phone,
+    gender: shaped.gender,
+    dateOfBirth: shaped.dateOfBirth,
+    mainSportId: shaped.mainSportId,
+    facilityId: shaped.facilityId,
+    status: shaped.status,
+    role: shaped.role,
+    syntheticEmail: shaped.syntheticEmail ?? false,
+  };
+}
+
+function normalizeNotificationStatus(value) {
+  if (typeof value !== 'string') return 'unread';
+  const trimmed = value.trim().toLowerCase();
+  return trimmed === 'read' ? 'read' : 'unread';
+}
+
+function shapeNotification(doc) {
+  if (!doc || typeof doc !== 'object') return null;
+  return {
+    _id: normalizeIdString(doc._id),
+    id: normalizeIdString(doc._id),
+    title: typeof doc.title === 'string' ? doc.title : '',
+    message: typeof doc.message === 'string' ? doc.message : '',
+    status: normalizeNotificationStatus(doc.status),
+    channel: typeof doc.channel === 'string' ? doc.channel : null,
+    priority: typeof doc.priority === 'string' ? doc.priority : null,
+    data: sanitizeAuditData(doc.data) ?? null,
+    createdAt: doc.createdAt ?? doc.at ?? doc.insertedAt ?? null,
+    updatedAt: doc.updatedAt ?? null,
+    readAt: doc.readAt ?? null,
+    recipientRole: typeof doc.recipientRole === 'string' ? doc.recipientRole : null,
+    recipientId: normalizeIdString(doc.recipientId),
+    facilityId: normalizeIdString(doc.facilityId),
+  };
+}
+
+const DOC_CACHE_TTL_MS = 5 * 60 * 1000;
+const facilityCache = new Map();
+const courtCache = new Map();
+const sportCache = new Map();
+
+function getCachedDocument(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > DOC_CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.doc;
+}
+
+function setCachedDocument(cache, key, doc) {
+  if (!doc) return;
+  cache.set(key, { doc, cachedAt: Date.now() });
+}
+
+async function fetchFacilityById(id) {
+  if (!id) return null;
+  if (id && typeof id === 'object' && id._id) return id;
+  const objectId = coerceObjectId(id);
+  if (!objectId) return null;
+  const cacheKey = objectId.toHexString();
+  const cached = getCachedDocument(facilityCache, cacheKey);
+  if (cached) return cached;
+  const doc = await db.collection('facilities').findOne({ _id: objectId });
+  if (doc) setCachedDocument(facilityCache, cacheKey, doc);
+  return doc;
+}
+
+async function fetchCourtById(id) {
+  if (!id) return null;
+  if (id && typeof id === 'object' && id._id) return id;
+  const objectId = coerceObjectId(id);
+  if (!objectId) return null;
+  const cacheKey = objectId.toHexString();
+  const cached = getCachedDocument(courtCache, cacheKey);
+  if (cached) return cached;
+  const doc = await db.collection('courts').findOne({ _id: objectId });
+  if (doc) setCachedDocument(courtCache, cacheKey, doc);
+  return doc;
+}
+
+async function fetchSportById(id) {
+  if (!id) return null;
+  if (id && typeof id === 'object' && id._id) return id;
+  const objectId = coerceObjectId(id);
+  if (!objectId) return null;
+  const cacheKey = objectId.toHexString();
+  const cached = getCachedDocument(sportCache, cacheKey);
+  if (cached) return cached;
+  const doc = await db.collection('sports').findOne({ _id: objectId });
+  if (doc) setCachedDocument(sportCache, cacheKey, doc);
+  return doc;
+}
+
+async function fetchStaffUser(req, { refresh = false } = {}) {
+  if (!req) return null;
+  if (!refresh && req.staffUser) return req.staffUser;
+  const staffId = getAppUserObjectId(req);
+  if (!staffId) return null;
+  const staffDoc = await db.collection('users').findOne({ _id: staffId, role: 'staff', status: { $ne: 'deleted' } });
+  if (!staffDoc) return null;
+  const sanitized = { ...staffDoc };
+  if (isSyntheticStaffEmail(sanitized.email)) {
+    sanitized.syntheticEmail = true;
+    sanitized.email = null;
+  }
+  req.staffUser = sanitized;
+  return sanitized;
+}
+
+function shapeMatchRequest(doc, { currentUserId } = {}) {
+  if (!doc || typeof doc !== 'object') return null;
+  const currentId = coerceObjectId(currentUserId);
+  const toHex = (value) => {
+    if (value instanceof ObjectId) return value.toHexString();
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed.length) return null;
+      if (ObjectId.isValid(trimmed)) return new ObjectId(trimmed).toHexString();
+      return trimmed;
+    }
+    return null;
+  };
+
+  const participants = Array.isArray(doc.participants)
+    ? doc.participants.map((value) => toHex(value)).filter(Boolean)
+    : [];
+
+  const teamArray = (source) => (Array.isArray(source)
+    ? source.map((value) => toHex(value)).filter(Boolean)
+    : []);
+
+  const teams = {
+    teamA: teamArray(doc.teams?.teamA),
+    teamB: teamArray(doc.teams?.teamB),
+  };
+
+  const creatorId = coerceObjectId(doc.creatorId);
+  let joinedTeam = null;
+  const currentHex = currentId ? currentId.toHexString() : null;
+  if (currentHex) {
+    if (teams.teamA.some((id) => id === currentHex)) joinedTeam = 'teamA';
+    else if (teams.teamB.some((id) => id === currentHex)) joinedTeam = 'teamB';
+  }
+
+  return cleanObject({
+    _id: toHex(doc._id),
+    id: toHex(doc._id),
+    sportId: toHex(doc.sportId),
+    facilityId: toHex(doc.facilityId),
+    courtId: toHex(doc.courtId),
+    creatorId: toHex(doc.creatorId),
+    facility: sanitizeAuditData(doc.facility) ?? null,
+    court: sanitizeAuditData(doc.court) ?? null,
+    sport: sanitizeAuditData(doc.sport) ?? null,
+    desiredStart: doc.desiredStart ?? doc.start ?? null,
+    desiredEnd: doc.desiredEnd ?? doc.end ?? null,
+    status: typeof doc.status === 'string' ? doc.status : 'open',
+    bookingStatus: typeof doc.bookingStatus === 'string' ? doc.bookingStatus : undefined,
+    visibility: typeof doc.visibility === 'string' ? doc.visibility : 'public',
+    skillRange: doc.skillRange ?? null,
+    teamSize: doc.teamSize ?? null,
+    participantLimit: doc.participantLimit ?? null,
+    location: doc.location ?? null,
+    notes: doc.notes ?? null,
+    participants,
+    participantCount: participants.length,
+    teams,
+    joinedTeam,
+    isCreator: creatorId && currentId ? creatorId.equals(currentId) : false,
+    createdAt: doc.createdAt ?? null,
+    updatedAt: doc.updatedAt ?? null,
+  });
+}
+
+async function fetchMatchRequests({ filter = {}, match, limit = 20, sort = { updatedAt: -1, _id: -1 }, currentUserId } = {}) {
+  if (!db) return [];
+  const matchStage = match || filter || {};
+  const pipeline = [];
+  if (matchStage && Object.keys(matchStage).length) {
+    pipeline.push({ $match: matchStage });
+  }
+  pipeline.push(
+    { $lookup: { from: 'facilities', localField: 'facilityId', foreignField: '_id', as: 'facility' } },
+    { $unwind: { path: '$facility', preserveNullAndEmptyArrays: true } },
+    { $lookup: { from: 'courts', localField: 'courtId', foreignField: '_id', as: 'court' } },
+    { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+    { $lookup: { from: 'sports', localField: 'sportId', foreignField: '_id', as: 'sport' } },
+    { $unwind: { path: '$sport', preserveNullAndEmptyArrays: true } },
+  );
+  if (sort) pipeline.push({ $sort: sort });
+  const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Number(limit))) : null;
+  if (normalizedLimit) pipeline.push({ $limit: normalizedLimit });
+  const docs = await db.collection('match_requests').aggregate(pipeline).toArray();
+  return docs.map((doc) => shapeMatchRequest(doc, { currentUserId }));
+}
+
 const TEAM_ALIAS_MAP = new Map([
   ['teama', 'teamA'],
   ['team a', 'teamA'],
@@ -3022,6 +3303,7 @@ app.post('/api/admin/courts', async (req, res, next) => {
     const facility = await fetchFacilityById(facilityId);
     if (!facility) return res.status(404).json({ error: 'Facility not found' });
 
+    const actorId = getAppUserObjectId(req) ?? SYSTEM_ACTOR_ID;
     const doc = {
       facilityId: facility._id,
       sportId: sport._id,
@@ -3029,7 +3311,7 @@ app.post('/api/admin/courts', async (req, res, next) => {
       status: statusValue,
       createdAt: new Date(),
       updatedAt: new Date(),
-      createdBy: staffUser._id,
+      createdBy: actorId,
     };
     if (code !== undefined) {
       const trimmed = String(code).trim();
@@ -3053,31 +3335,14 @@ app.post('/api/admin/courts', async (req, res, next) => {
 
 app.put('/api/admin/courts/:id', async (req, res, next) => {
   try {
-    const staffUser = await fetchStaffUser(req);
-    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
-
     const { id } = req.params;
     const court = await fetchCourtById(id);
     if (!court) {
-      console.warn('[staffUpdateCourt] court not found', {
-        staffId: staffUser._id,
-        facilityId: staffUser.facilityId,
-        requestedId: id,
-      });
+      console.warn('[admin.courts:update] court not found', { requestedId: id });
       return res.status(404).json({ error: 'Not found', reason: 'court_missing' });
     }
 
-    if (String(court.facilityId) !== String(staffUser.facilityId)) {
-      console.warn('[staffUpdateCourt] facility mismatch', {
-        staffId: staffUser._id,
-        staffFacility: staffUser.facilityId,
-        courtFacility: court.facilityId,
-        courtId: court._id,
-      });
-      return res.status(403).json({ error: 'Not authorized for this court' });
-    }
-
-    const { name, code, sportId, status } = req.body || {};
+    const { name, code, sportId, status, facilityId } = req.body || {};
     const $set = { updatedAt: new Date() };
     const $unset = {};
 
@@ -3099,14 +3364,25 @@ app.put('/api/admin/courts/:id', async (req, res, next) => {
     if (sportId !== undefined) {
       const sport = await fetchSportById(sportId);
       if (!sport) {
-        console.warn('[staffUpdateCourt] sport not found', {
-          staffId: staffUser._id,
+        console.warn('[admin.courts:update] sport not found', {
           courtId: court._id,
           requestedSportId: sportId,
         });
         return res.status(404).json({ error: 'Sport not found' });
       }
       $set.sportId = sport._id;
+    }
+
+    if (facilityId !== undefined) {
+      const facility = await fetchFacilityById(facilityId);
+      if (!facility) {
+        console.warn('[admin.courts:update] facility not found', {
+          courtId: court._id,
+          requestedFacilityId: facilityId,
+        });
+        return res.status(404).json({ error: 'Facility not found' });
+      }
+      $set.facilityId = facility._id;
     }
 
     if (status !== undefined) {
@@ -3125,45 +3401,18 @@ app.put('/api/admin/courts/:id', async (req, res, next) => {
     const updateOps = {};
     if (Object.keys($set).length) updateOps.$set = $set;
     if (Object.keys($unset).length) updateOps.$unset = $unset;
-    const courtFilterCandidates = buildIdCandidates(court._id) ?? [];
-    if (!courtFilterCandidates.length) {
-      console.warn('[staffUpdateCourt] could not build id candidates', {
-        courtId: court._id,
-      });
-      return res.status(500).json({ error: 'Internal error', reason: 'invalid_court_id' });
-    }
 
-    if (process.env.DEBUG?.includes('staffUpdateCourt')) {
-      console.warn('[staffUpdateCourt] id candidates', courtFilterCandidates.map((candidate) => {
-        if (candidate instanceof ObjectId) {
-          return { type: 'ObjectId', value: candidate.toHexString() };
-        }
-        return { type: typeof candidate, value: String(candidate) };
-      }));
-    }
-
-    const filter = { _id: { $in: courtFilterCandidates } };
+    const filter = { _id: court._id };
     const updateResult = await db.collection('courts').findOneAndUpdate(
       filter,
       updateOps,
-      { returnDocument: ReturnDocument.AFTER, includeResultMetadata: true }
+      { returnDocument: ReturnDocument.AFTER }
     );
 
-    let updatedCourt = updateResult.value;
-
-    if (!updatedCourt && updateResult.lastErrorObject?.updatedExisting) {
-      updatedCourt = await db.collection('courts').findOne(filter);
-    }
-
+    const updatedCourt = updateResult.value;
     if (!updatedCourt) {
-      console.warn('[staffUpdateCourt] update returned empty result', {
+      console.warn('[admin.courts:update] update returned empty result', {
         courtId: court._id,
-        filter,
-        candidates: courtFilterCandidates.map((candidate) => (
-          candidate instanceof ObjectId
-            ? { type: 'ObjectId', value: candidate.toHexString() }
-            : { type: typeof candidate, value: String(candidate) }
-        )),
         updates: updateOps,
       });
       return res.status(404).json({ error: 'Not found', reason: 'update_failed' });
