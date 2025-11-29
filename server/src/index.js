@@ -3154,7 +3154,7 @@ app.post('/api/user/notifications/:id/read', authMiddleware, requireVerifiedCust
   } catch (e) { next(e); }
 });
 
-app.get('/api/staff/facility', requireStaff, async (req, res, next) => {
+app.get('/api/staff/facility', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3216,7 +3216,7 @@ app.get('/api/staff/facility', requireStaff, async (req, res, next) => {
   }
 });
 
-app.get('/api/staff/sports', requireStaff, async (req, res, next) => {
+app.get('/api/staff/sports', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3249,7 +3249,7 @@ app.get('/api/staff/sports', requireStaff, async (req, res, next) => {
   }
 });
 
-app.get('/api/staff/bookings', requireStaff, async (req, res, next) => {
+app.get('/api/staff/bookings', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3299,7 +3299,7 @@ app.get('/api/staff/bookings', requireStaff, async (req, res, next) => {
   }
 });
 
-app.patch('/api/staff/bookings/:bookingId/status', requireStaff, async (req, res, next) => {
+app.patch('/api/staff/bookings/:id/status', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3309,7 +3309,7 @@ app.patch('/api/staff/bookings/:bookingId/status', requireStaff, async (req, res
       return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
     }
 
-    const bookingCandidates = buildIdCandidates(req.params.bookingId);
+    const bookingCandidates = buildIdCandidates(req.params.id);
     if (!bookingCandidates.length) {
       return res.status(404).json({ error: 'Lượt đặt sân không tồn tại' });
     }
@@ -3367,7 +3367,7 @@ app.patch('/api/staff/bookings/:bookingId/status', requireStaff, async (req, res
   }
 });
 
-app.get('/api/staff/invoices', requireStaff, async (req, res, next) => {
+app.get('/api/staff/invoices', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3453,7 +3453,7 @@ app.get('/api/staff/invoices', requireStaff, async (req, res, next) => {
   }
 });
 
-app.patch('/api/staff/invoices/:invoiceId/status', requireStaff, async (req, res, next) => {
+app.patch('/api/staff/invoices/:id/status', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3463,7 +3463,7 @@ app.patch('/api/staff/invoices/:invoiceId/status', requireStaff, async (req, res
       return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
     }
 
-    const invoiceCandidates = buildIdCandidates(req.params.invoiceId);
+    const invoiceCandidates = buildIdCandidates(req.params.id);
     if (!invoiceCandidates.length) {
       return res.status(404).json({ error: 'Hoá đơn không tồn tại' });
     }
@@ -3588,7 +3588,7 @@ app.patch('/api/staff/invoices/:invoiceId/status', requireStaff, async (req, res
   }
 });
 
-app.get('/api/staff/profile', requireStaff, async (req, res, next) => {
+app.get('/api/staff/profile', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3599,7 +3599,7 @@ app.get('/api/staff/profile', requireStaff, async (req, res, next) => {
   }
 });
 
-app.put('/api/staff/profile', requireStaff, async (req, res, next) => {
+app.put('/api/staff/profile', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3660,7 +3660,7 @@ app.put('/api/staff/profile', requireStaff, async (req, res, next) => {
   }
 });
 
-app.post('/api/staff/profile/change-password', requireStaff, async (req, res, next) => {
+app.post('/api/staff/profile/change-password', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3706,7 +3706,7 @@ app.post('/api/staff/profile/change-password', requireStaff, async (req, res, ne
   }
 });
 
-app.get('/api/staff/customers', requireStaff, async (req, res, next) => {
+app.get('/api/staff/customers', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3801,7 +3801,7 @@ app.get('/api/staff/customers', requireStaff, async (req, res, next) => {
   }
 });
 
-app.get('/api/staff/notifications', requireStaff, async (req, res, next) => {
+app.get('/api/staff/notifications', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3828,7 +3828,7 @@ app.get('/api/staff/notifications', requireStaff, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-app.post('/api/staff/notifications/:id/read', requireStaff, async (req, res, next) => {
+app.post('/api/staff/notifications/:id/read', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -3866,7 +3866,7 @@ app.post('/api/staff/notifications/:id/read', requireStaff, async (req, res, nex
   } catch (e) { next(e); }
 });
 
-app.post('/api/staff/notifications/mark-all-read', requireStaff, async (req, res, next) => {
+app.post('/api/staff/notifications/mark-all-read', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -4036,17 +4036,6 @@ app.delete('/api/admin/bookings/:id', async (req, res, next) => {
     });
     res.json({ ok: true });
   } catch (e) { next(e); }
-});
-
-// Simple error handler
-app.use((err, req, res, next) => {
-  console.error(err);
-  const payload = { error: 'Internal Server Error' };
-  if (err?.message) payload.message = err.message;
-  if (err?.name) payload.name = err.name;
-  if (err?.code) payload.code = err.code;
-  if (err?.errInfo) payload.details = err.errInfo;
-  res.status(500).json(payload);
 });
 
 // --- Admin APIs (no auth for demo; protect in production) ---
@@ -4270,7 +4259,7 @@ app.put('/api/admin/courts/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-app.delete('/api/staff/courts/:id', requireStaff, async (req, res, next) => {
+app.delete('/api/staff/courts/:id', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -4365,7 +4354,7 @@ app.get('/api/admin/price-profiles', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-app.get('/api/staff/price-profiles', requireStaff, async (req, res, next) => {
+app.get('/api/staff/price-profiles', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -4615,7 +4604,7 @@ app.post('/api/admin/price-profiles/upsert', async (req, res, next) => {
   }
 });
 
-app.post('/api/staff/price-profiles/upsert', requireStaff, async (req, res, next) => {
+app.post('/api/staff/price-profiles/upsert', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
     if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
@@ -5044,6 +5033,24 @@ app.delete('/api/admin/users/:id', async (req, res, next) => {
 
     res.json({ deleted: true, user: result.value });
   } catch (e) { next(e); }
+});
+
+app.use((req, res, next) => {
+  res.status(404).json({
+    error: 'Not found',
+    method: req.method,
+    path: req.originalUrl,
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  const payload = { error: 'Internal Server Error' };
+  if (err?.message) payload.message = err.message;
+  if (err?.name) payload.name = err.name;
+  if (err?.code) payload.code = err.code;
+  if (err?.errInfo) payload.details = err.errInfo;
+  res.status(500).json(payload);
 });
 
 const PORT = process.env.PORT || 3000;
