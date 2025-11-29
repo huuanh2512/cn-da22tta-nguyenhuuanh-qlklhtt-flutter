@@ -266,6 +266,27 @@ function sanitizeStaffContact(user) {
   return cloned;
 }
 
+function normalizeStringArrayInput(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (item == null ? '' : String(item).trim()))
+      .filter((item) => item.length);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length);
+  }
+  if (typeof value === 'object') {
+    return Object.values(value)
+      .map((item) => (item == null ? '' : String(item).trim()))
+      .filter((item) => item.length);
+  }
+  return [];
+}
+
 function coerceObjectId(value) {
   if (value == null) return null;
   const raw = String(value).trim();
@@ -713,6 +734,178 @@ function normalizeBookingForResponse(doc) {
     sportName: toCleanString(doc.sportName),
     participants,
   };
+}
+
+function shapeStaffCustomer(userDoc) {
+  if (!userDoc || typeof userDoc !== 'object') return null;
+  const customer = {
+    _id: normalizeIdString(userDoc._id),
+    id: normalizeIdString(userDoc._id),
+    name: extractUserName(userDoc) || (typeof userDoc.name === 'string' ? userDoc.name : null),
+    email: typeof userDoc.email === 'string' ? userDoc.email : null,
+    phone: typeof userDoc.phone === 'string' ? userDoc.phone : null,
+  };
+  if (!customer.name && userDoc.profile && typeof userDoc.profile === 'object') {
+    if (typeof userDoc.profile.fullName === 'string' && userDoc.profile.fullName.trim().length) {
+      customer.name = userDoc.profile.fullName.trim();
+    } else if (typeof userDoc.profile.name === 'string' && userDoc.profile.name.trim().length) {
+      customer.name = userDoc.profile.name.trim();
+    }
+  }
+  return cleanObject(customer);
+}
+
+function shapeStaffBooking(doc) {
+  if (!doc || typeof doc !== 'object') return null;
+  const sanitized = sanitizeAuditData(doc) || {};
+  const court = doc.court ? cleanObject({
+    _id: normalizeIdString(doc.court._id),
+    id: normalizeIdString(doc.court._id),
+    name: typeof doc.court.name === 'string' ? doc.court.name : null,
+    code: typeof doc.court.code === 'string' ? doc.court.code : null,
+  }) : undefined;
+  const sport = doc.sport ? cleanObject({
+    _id: normalizeIdString(doc.sport._id),
+    id: normalizeIdString(doc.sport._id),
+    name: typeof doc.sport.name === 'string' ? doc.sport.name : null,
+  }) : undefined;
+  return cleanObject({
+    ...sanitized,
+    customer: shapeStaffCustomer(doc.customer) ?? undefined,
+    court,
+    sport,
+  });
+}
+
+function normalizePaymentAmount(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (typeof value === 'object' && value && typeof value.valueOf === 'function') {
+    const converted = value.valueOf();
+    if (typeof converted === 'number' && Number.isFinite(converted)) return converted;
+  }
+  return 0;
+}
+
+function normalizePaymentTimestamp(payment) {
+  if (!payment || typeof payment !== 'object') return null;
+  const candidates = [payment.createdAt, payment.processedAt, payment.paidAt, payment.updatedAt];
+  for (const candidate of candidates) {
+    const coerced = coerceDateValue(candidate);
+    if (coerced) return coerced;
+  }
+  return null;
+}
+
+function shapeStaffPayments(payments) {
+  if (!Array.isArray(payments) || !payments.length) return [];
+  return payments.map((payment) => {
+    const sanitized = sanitizeAuditData(payment) || {};
+    return {
+      ...sanitized,
+      amount: normalizePaymentAmount(sanitized.amount ?? payment.amount ?? 0),
+    };
+  });
+}
+
+function computePaymentTotals(payments) {
+  const normalizedPayments = shapeStaffPayments(payments);
+  let totalPaid = 0;
+  let lastPaymentAt = null;
+  for (const payment of normalizedPayments) {
+    const status = typeof payment.status === 'string' ? payment.status.trim().toLowerCase() : '';
+    if (status === 'failed' || status === 'cancelled' || status === 'voided') continue;
+    totalPaid += normalizePaymentAmount(payment.amount);
+    const timestamp = normalizePaymentTimestamp(payment);
+    if (timestamp && (!lastPaymentAt || timestamp > lastPaymentAt)) {
+      lastPaymentAt = timestamp;
+    }
+  }
+  return { payments: normalizedPayments, totalPaid, lastPaymentAt };
+}
+
+function shapeStaffInvoice(doc) {
+  if (!doc || typeof doc !== 'object') return null;
+  const amount = coerceNumber(doc.amount) ?? 0;
+  const currency = typeof doc.currency === 'string' && doc.currency.trim().length
+    ? doc.currency.trim()
+    : (typeof doc.bookingCurrency === 'string' && doc.bookingCurrency.trim().length
+      ? doc.bookingCurrency.trim()
+      : 'VND');
+
+  const { payments, totalPaid, lastPaymentAt } = computePaymentTotals(doc.payments);
+  const outstanding = Math.max(0, amount - totalPaid);
+
+  const bookingInfo = doc.booking ? cleanObject({
+    _id: normalizeIdString(doc.booking._id),
+    id: normalizeIdString(doc.booking._id),
+    start: doc.booking.start ?? null,
+    end: doc.booking.end ?? null,
+    status: typeof doc.booking.status === 'string' ? doc.booking.status : null,
+    courtId: normalizeIdString(doc.booking.courtId),
+    sportId: normalizeIdString(doc.booking.sportId),
+  }) : undefined;
+
+  const courtInfo = doc.court ? cleanObject({
+    _id: normalizeIdString(doc.court._id),
+    id: normalizeIdString(doc.court._id),
+    name: typeof doc.court.name === 'string' ? doc.court.name : null,
+    code: typeof doc.court.code === 'string' ? doc.court.code : null,
+  }) : undefined;
+
+  return cleanObject({
+    _id: normalizeIdString(doc._id),
+    id: normalizeIdString(doc._id),
+    bookingId: normalizeIdString(doc.bookingId ?? doc.booking?._id),
+    amount,
+    currency,
+    status: typeof doc.status === 'string' && doc.status.trim().length ? doc.status.trim() : 'unpaid',
+    issuedAt: doc.issuedAt ?? doc.createdAt ?? doc.booking?.start ?? null,
+    lastPaymentAt,
+    totalPaid,
+    outstanding,
+    booking: bookingInfo,
+    customer: shapeStaffCustomer(doc.customer) ?? undefined,
+    court: courtInfo,
+    payments,
+  });
+}
+
+function shapeStaffFacilitySummary(facilityDoc) {
+  if (!facilityDoc || typeof facilityDoc !== 'object') return null;
+  return cleanObject({
+    id: normalizeIdString(facilityDoc._id),
+    _id: normalizeIdString(facilityDoc._id),
+    name: typeof facilityDoc.name === 'string' ? facilityDoc.name : null,
+    phone: typeof facilityDoc.phone === 'string' ? facilityDoc.phone : null,
+    email: typeof facilityDoc.email === 'string' ? facilityDoc.email : null,
+    openingHours: facilityDoc.openingHours ?? null,
+    address: facilityDoc.address ?? null,
+  });
+}
+
+function shapeStaffProfileResponse(staffUser, facilityDoc) {
+  if (!staffUser || typeof staffUser !== 'object') return null;
+  const facility = shapeStaffFacilitySummary(facilityDoc);
+  const name = typeof staffUser.name === 'string' && staffUser.name.trim().length
+    ? staffUser.name.trim()
+    : extractUserName(staffUser);
+  return cleanObject({
+    id: normalizeIdString(staffUser._id),
+    _id: normalizeIdString(staffUser._id),
+    name,
+    email: typeof staffUser.email === 'string' ? staffUser.email : null,
+    phone: typeof staffUser.phone === 'string' ? staffUser.phone : null,
+    role: typeof staffUser.role === 'string' ? staffUser.role : 'staff',
+    facilityId: normalizeIdString(staffUser.facilityId),
+    facility: facility ?? undefined,
+    createdAt: staffUser.createdAt ?? null,
+    updatedAt: staffUser.updatedAt ?? null,
+    syntheticEmail: staffUser.syntheticEmail === true,
+  });
 }
 
 async function getDecoratedBookings(match, { sort = { start: -1, _id: -1 }, limit } = {}) {
@@ -2959,6 +3152,450 @@ app.post('/api/user/notifications/:id/read', authMiddleware, requireVerifiedCust
     if (!result.value) return res.status(404).json({ error: 'Không tìm thấy thông báo' });
     res.json(shapeNotification(result.value));
   } catch (e) { next(e); }
+});
+
+app.get('/api/staff/facility', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const facilityDoc = await fetchFacilityById(facilityId);
+    if (!facilityDoc) {
+      return res.status(404).json({ error: 'Facility not found' });
+    }
+
+    const courts = await db.collection('courts')
+      .find({ facilityId, status: { $ne: 'deleted' } })
+      .sort({ name: 1 })
+      .toArray();
+
+    const courtIds = courts
+      .map((court) => coerceObjectId(court._id))
+      .filter((oid) => oid);
+
+    const maintenanceMap = new Map();
+    if (courtIds.length) {
+      const maintenanceDocs = await db.collection('maintenance')
+        .find({ courtId: { $in: courtIds }, status: { $ne: 'deleted' } })
+        .sort({ start: 1 })
+        .limit(1000)
+        .toArray();
+
+      for (const doc of maintenanceDocs) {
+        const key = normalizeIdString(doc.courtId);
+        if (!key) continue;
+        const shaped = sanitizeAuditData(doc);
+        const list = maintenanceMap.get(key) || [];
+        list.push(shaped);
+        maintenanceMap.set(key, list);
+      }
+    }
+
+    const shapedCourts = courts.map((court) => {
+      const courtId = normalizeIdString(court._id);
+      const maintenance = maintenanceMap.get(courtId) || [];
+      const amenities = normalizeStringArrayInput(court.amenities);
+      return cleanObject({
+        ...sanitizeAuditData(court),
+        amenities,
+        maintenance,
+      });
+    });
+
+    res.json({
+      facility: sanitizeAuditData(facilityDoc),
+      courts: shapedCourts,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/sports', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const includeInactive = req.query?.includeInactive === 'true';
+    const filter = includeInactive ? {} : { active: { $ne: false } };
+
+    const facilitySportIds = await db.collection('courts').distinct('sportId', {
+      facilityId,
+      status: { $ne: 'deleted' },
+    });
+
+    const normalizedSportIds = facilitySportIds
+      .map((id) => coerceObjectId(id))
+      .filter((oid) => oid);
+
+    if (normalizedSportIds.length) {
+      filter._id = { $in: normalizedSportIds };
+    }
+
+    const sports = await db.collection('sports').find(filter).sort({ name: 1 }).toArray();
+    res.json(sports.map((sport) => sanitizeAuditData(sport)));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/bookings', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const { status } = req.query || {};
+    const filter = {
+      facilityId,
+      deletedAt: { $exists: false },
+    };
+
+    if (typeof status === 'string' && status.trim().length) {
+      filter.status = status.trim().toLowerCase();
+    }
+
+    const fromDate = coerceDateValue(req.query?.from);
+    const toDate = coerceDateValue(req.query?.to);
+    if (fromDate || toDate) {
+      filter.start = {};
+      if (fromDate) filter.start.$gte = fromDate;
+      if (toDate) filter.start.$lte = toDate;
+    }
+
+    const parsedLimit = Number.parseInt(req.query?.limit, 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 100;
+
+    const pipeline = [
+      { $match: filter },
+      { $sort: { start: -1, _id: -1 } },
+      { $limit: limit },
+      { $lookup: { from: 'users', localField: 'customerId', foreignField: '_id', as: 'customer' } },
+      { $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'courts', localField: 'courtId', foreignField: '_id', as: 'court' } },
+      { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'sports', localField: 'sportId', foreignField: '_id', as: 'sport' } },
+      { $unwind: { path: '$sport', preserveNullAndEmptyArrays: true } },
+    ];
+
+    const bookings = await db.collection('bookings').aggregate(pipeline).toArray();
+    res.json(bookings.map((doc) => shapeStaffBooking(doc)).filter(Boolean));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/invoices', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const invoiceMatch = {};
+    if (typeof req.query?.status === 'string' && req.query.status.trim().length) {
+      invoiceMatch.status = req.query.status.trim();
+    }
+    const issuedFrom = coerceDateValue(req.query?.from);
+    const issuedTo = coerceDateValue(req.query?.to);
+    if (issuedFrom || issuedTo) {
+      invoiceMatch.issuedAt = {};
+      if (issuedFrom) invoiceMatch.issuedAt.$gte = issuedFrom;
+      if (issuedTo) invoiceMatch.issuedAt.$lte = issuedTo;
+    }
+
+    const parsedLimit = Number.parseInt(req.query?.limit, 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 100;
+
+    const pipeline = [];
+    if (Object.keys(invoiceMatch).length) {
+      pipeline.push({ $match: invoiceMatch });
+    }
+
+    pipeline.push(
+      {
+        $lookup: {
+          from: 'bookings',
+          let: { bookingId: '$bookingId' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$bookingId'] } } },
+            { $match: { facilityId } },
+          ],
+          as: 'booking',
+        },
+      },
+      { $unwind: { path: '$booking', preserveNullAndEmptyArrays: false } },
+      { $lookup: { from: 'users', localField: 'booking.customerId', foreignField: '_id', as: 'customer' } },
+      { $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'courts', localField: 'booking.courtId', foreignField: '_id', as: 'court' } },
+      { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'payments', localField: '_id', foreignField: 'invoiceId', as: 'payments' } },
+      {
+        $addFields: {
+          bookingCurrency: '$booking.currency',
+        },
+      },
+      {
+        $sort: {
+          issuedAt: -1,
+          _id: -1,
+        },
+      },
+      { $limit: limit },
+    );
+
+    const invoices = await db.collection('invoices').aggregate(pipeline).toArray();
+    const shaped = invoices.map((doc) => shapeStaffInvoice(doc)).filter(Boolean);
+
+    const summary = shaped.reduce((acc, invoice) => {
+      acc.invoiceCount += 1;
+      acc.totalInvoiced += invoice?.amount ?? 0;
+      acc.totalPaid += invoice?.totalPaid ?? 0;
+      acc.totalOutstanding += invoice?.outstanding ?? 0;
+      acc.totalRevenue += invoice?.totalPaid ?? 0;
+      return acc;
+    }, {
+      invoiceCount: 0,
+      totalInvoiced: 0,
+      totalPaid: 0,
+      totalOutstanding: 0,
+      totalRevenue: 0,
+    });
+
+    res.json({ invoices: shaped, summary });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/profile', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+    const facilityDoc = staffUser.facilityId ? await fetchFacilityById(staffUser.facilityId) : null;
+    res.json(shapeStaffProfileResponse(staffUser, facilityDoc));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/staff/profile', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const body = req.body || {};
+    const $set = {};
+    const $unset = {};
+
+    const handleField = (field, maxLength = 120) => {
+      if (body[field] === undefined) return;
+      const value = typeof body[field] === 'string' ? body[field].trim() : '';
+      if (value.length) {
+        $set[field] = value.substring(0, maxLength);
+        delete $unset[field];
+      } else {
+        $unset[field] = '';
+        delete $set[field];
+      }
+    };
+
+    handleField('name', 120);
+    handleField('email', 160);
+    handleField('phone', 40);
+
+    if (!Object.keys($set).length && !Object.keys($unset).length) {
+      return res.status(400).json({ error: 'Không có thay đổi nào được gửi lên' });
+    }
+
+    $set.updatedAt = new Date();
+
+    const updateDoc = {};
+    if (Object.keys($set).length) updateDoc.$set = $set;
+    if (Object.keys($unset).length) updateDoc.$unset = $unset;
+
+    const result = await db.collection('users').findOneAndUpdate(
+      { _id: staffUser._id, role: 'staff' },
+      updateDoc,
+      { returnDocument: ReturnDocument.AFTER },
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ error: 'Staff account not found' });
+    }
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.profile-update',
+      resource: 'user',
+      resourceId: staffUser._id,
+      changes: sanitizeAuditData({ $set, $unset }),
+    });
+
+    req.staffUser = result.value;
+    const facilityDoc = result.value.facilityId ? await fetchFacilityById(result.value.facilityId) : null;
+    res.json(shapeStaffProfileResponse(result.value, facilityDoc));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff/profile/change-password', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự' });
+    }
+    if (typeof currentPassword !== 'string' || !currentPassword.length) {
+      return res.status(400).json({ error: 'Vui lòng nhập mật khẩu hiện tại' });
+    }
+
+    const currentHash = staffUser.passwordHash;
+    if (!currentHash) {
+      return res.status(400).json({ error: 'Tài khoản không hỗ trợ đổi mật khẩu' });
+    }
+
+    const matches = await bcrypt.compare(currentPassword, currentHash);
+    if (!matches) {
+      return res.status(403).json({ error: 'Mật khẩu hiện tại không đúng' });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải khác mật khẩu hiện tại' });
+    }
+
+    const passwordHash = await bcrypt.hash(String(newPassword), 10);
+    await db.collection('users').updateOne(
+      { _id: staffUser._id },
+      { $set: { passwordHash, passwordChangedAt: new Date(), updatedAt: new Date() } },
+    );
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.change-password',
+      resource: 'user',
+      resourceId: staffUser._id,
+      message: 'Staff user updated password',
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/customers', requireStaff, async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const parsedLimit = Number.parseInt(req.query?.limit, 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
+
+    const pipeline = [
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          customerId: { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: '$customerId',
+          lastBookingAt: { $max: '$start' },
+          totalBookings: { $sum: 1 },
+          bookings: {
+            $push: {
+              _id: '$_id',
+              start: '$start',
+              end: '$end',
+              status: '$status',
+              total: {
+                $ifNull: [
+                  '$total',
+                  { $ifNull: ['$pricingSnapshot.total', 0] },
+                ],
+              },
+              currency: {
+                $ifNull: [
+                  '$currency',
+                  { $ifNull: ['$pricingSnapshot.currency', 'VND'] },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          lastBookingAt: 1,
+          totalBookings: 1,
+          bookings: { $slice: ['$bookings', 5] },
+        },
+      },
+      { $sort: { lastBookingAt: -1 } },
+      { $limit: limit },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'customer' } },
+      { $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } },
+    ];
+
+    const docs = await db.collection('bookings').aggregate(pipeline).toArray();
+    const customers = docs.map((doc) => {
+      const contact = shapeStaffCustomer(doc.customer) || {
+        _id: normalizeIdString(doc._id),
+      };
+      const bookings = Array.isArray(doc.bookings)
+        ? doc.bookings.map((booking) => cleanObject({
+          _id: normalizeIdString(booking._id),
+          id: normalizeIdString(booking._id),
+          start: booking.start ?? null,
+          end: booking.end ?? null,
+          status: booking.status ?? null,
+          total: normalizePaymentAmount(booking.total ?? 0),
+          currency: typeof booking.currency === 'string' ? booking.currency : 'VND',
+        }))
+        : [];
+      return cleanObject({
+        id: contact._id,
+        _id: contact._id,
+        name: contact.name ?? contact.email ?? contact.phone ?? 'Khách hàng',
+        email: contact.email ?? null,
+        phone: contact.phone ?? null,
+        lastBookingAt: doc.lastBookingAt ?? null,
+        totalBookings: doc.totalBookings ?? bookings.length,
+        bookings,
+      });
+    });
+
+    res.json({ customers });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/staff/notifications', requireStaff, async (req, res, next) => {
