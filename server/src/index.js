@@ -2202,9 +2202,7 @@ app.get('/api/user/invoices', authMiddleware, requireVerifiedCustomer, async (re
         ? doc.currency.trim()
         : (typeof doc.bookingCurrency === 'string' && doc.bookingCurrency.trim().length
           ? doc.bookingCurrency.trim()
-          : (typeof bookingDoc.currency === 'string' && bookingDoc.currency.trim().length
-            ? bookingDoc.currency.trim()
-            : 'VND'));
+          : 'VND');
 
       const statusValue = (typeof doc.status === 'string' && doc.status.trim().length)
         ? doc.status.trim()
