@@ -817,6 +817,30 @@ async function ensureBookingInvoice(bookingDoc, { issuedAt } = {}) {
   return result.value ?? null;
 }
 
+async function voidBookingInvoice(bookingDoc, { reason = 'booking_cancelled' } = {}) {
+  if (!db || !bookingDoc || typeof bookingDoc !== 'object') return null;
+  const bookingId = coerceObjectId(bookingDoc._id ?? bookingDoc.bookingId);
+  if (!bookingId) return null;
+
+  const now = new Date();
+  const update = {
+    $set: {
+      status: 'void',
+      voidedAt: now,
+      voidReason: reason,
+      updatedAt: now,
+    },
+  };
+
+  const result = await db.collection('invoices').findOneAndUpdate(
+    { bookingId },
+    update,
+    { returnDocument: ReturnDocument.AFTER },
+  );
+
+  return result.value ?? null;
+}
+
 function shapeStaffCustomer(userDoc) {
   if (!userDoc || typeof userDoc !== 'object') return null;
   const customer = {
@@ -1405,6 +1429,12 @@ async function autoCancelStaleBookings() {
       });
 
       await syncMatchRequestBooking(updatedBooking, { status: 'cancelled' });
+
+      try {
+        await voidBookingInvoice(updatedBooking, { reason: 'system_auto_timeout' });
+      } catch (invoiceError) {
+        console.error('autoCancel: failed to void invoice', invoiceError);
+      }
 
       try {
         await notifyStaffBookingCancelled(updatedBooking, { cancelledBy: 'system_auto_timeout' });
@@ -2239,6 +2269,12 @@ app.put('/api/bookings/:id/cancel', authMiddleware, requireVerifiedCustomer, asy
     });
 
     await syncMatchRequestBooking(updatedBooking, { status: 'cancelled' });
+
+    try {
+      await voidBookingInvoice(updatedBooking, { reason: 'customer_cancelled' });
+    } catch (invoiceError) {
+      console.error('Failed to void invoice after customer cancellation', invoiceError);
+    }
 
     try {
       await notifyStaffBookingCancelled(updatedBooking, { cancelledBy: 'customer' });
@@ -3444,6 +3480,12 @@ app.patch('/api/staff/bookings/:id/status', async (req, res, next) => {
         await ensureBookingInvoice(updatedBooking);
       } catch (invoiceError) {
         console.error('Failed to ensure invoice for booking', bookingDoc._id, invoiceError);
+      }
+    } else if (nextStatus === 'cancelled') {
+      try {
+        await voidBookingInvoice(updatedBooking, { reason: 'staff_cancelled' });
+      } catch (invoiceError) {
+        console.error('Failed to void invoice for booking', bookingDoc._id, invoiceError);
       }
     }
 
