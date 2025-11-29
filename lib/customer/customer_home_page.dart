@@ -33,6 +33,7 @@ class CustomerHomePage extends StatefulWidget {
 class _CustomerHomePageState extends State<CustomerHomePage> {
   static const Duration _sectionAnimationDuration = Duration(milliseconds: 250);
   static const Curve _sectionAnimationCurve = Curves.easeInOut;
+  static const Duration _navDoubleTapThreshold = Duration(milliseconds: 450);
 
   final AuthService _auth = AuthService.instance;
   final ApiService _api = ApiService();
@@ -81,6 +82,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   ApiErrorDetails? _matchRequestsError;
 
   int _currentIndex = 0;
+  final Map<int, Key> _tabKeys = {
+    1: UniqueKey(),
+    2: UniqueKey(),
+    3: UniqueKey(),
+    4: UniqueKey(),
+  };
+  DateTime? _lastNavTapTime;
+  int? _lastNavTappedIndex;
 
   @override
   void initState() {
@@ -567,10 +576,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             index: _currentIndex,
             children: [
               _buildOverviewTab(user),
-              const BookingHistoryPage(embedded: true),
-              const UserInvoicesPage(embedded: true),
-              const MatchRequestsPage(embedded: true),
-              UserProfilePage(embedded: true, onProfileChanged: _loadAll),
+              BookingHistoryPage(key: _tabKeys[1], embedded: true),
+              UserInvoicesPage(key: _tabKeys[2], embedded: true),
+              MatchRequestsPage(key: _tabKeys[3], embedded: true),
+              UserProfilePage(
+                key: _tabKeys[4],
+                embedded: true,
+                onProfileChanged: _loadAll,
+              ),
             ],
           ),
         ),
@@ -596,18 +609,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                 backgroundColor: Colors.transparent,
                 elevation: 0,
                 currentIndex: _currentIndex,
-                onTap: (index) {
-                  if (_currentIndex == index) {
-                    if (index == 0) {
-                      _refreshOverview();
-                    }
-                    return;
-                  }
-                  setState(() => _currentIndex = index);
-                  if (index == 0) {
-                    _refreshOverview();
-                  }
-                },
+                onTap: _handleNavTap,
                 selectedItemColor: Colors.black,
                 unselectedItemColor: Colors.black54,
                 selectedLabelStyle: const TextStyle(
@@ -657,6 +659,39 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
         ),
       ),
     );
+  }
+
+  void _handleNavTap(int index) {
+    final now = DateTime.now();
+    final sameTab = index == _currentIndex;
+    final isDoubleTap = sameTab &&
+        _lastNavTappedIndex == index &&
+        _lastNavTapTime != null &&
+        now.difference(_lastNavTapTime!) <= _navDoubleTapThreshold;
+
+    _lastNavTapTime = now;
+    _lastNavTappedIndex = index;
+
+    if (!sameTab) {
+      setState(() => _currentIndex = index);
+      _reloadTab(index);
+      return;
+    }
+
+    if (isDoubleTap) {
+      _reloadTab(index);
+    }
+  }
+
+  void _reloadTab(int index) {
+    if (index == 0) {
+      _refreshOverview();
+      return;
+    }
+    if (!_tabKeys.containsKey(index)) return;
+    setState(() {
+      _tabKeys[index] = UniqueKey();
+    });
   }
 
   Widget _buildOverviewTab(AppUser? user) {
@@ -1268,25 +1303,32 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   }
 
   Widget _buildMatchRequestPreview(MatchRequest request, ThemeData theme) {
-    final sport = request.sportName ?? 'Môn #${request.sportId}';
+    final sportLabel = (request.sportName?.trim().isNotEmpty ?? false)
+        ? request.sportName!.trim()
+        : 'Môn thể thao (chưa xác định)';
+    final facilityLabel = (request.facilityName?.trim().isNotEmpty ?? false)
+        ? request.facilityName!.trim()
+        : '(chưa rõ)';
+    final courtLabel = (request.courtName?.trim().isNotEmpty ?? false)
+        ? request.courtName!.trim()
+        : '(chưa rõ)';
     final timeLabel = _formatMatchRequestTime(request);
     final statusLabel = _matchRequestStatusLabel(request.status);
     final locationParts = <String>[
-      if ((request.facilityName ?? '').isNotEmpty) request.facilityName!,
-      if ((request.courtName ?? '').isNotEmpty) request.courtName!,
+      'Cơ sở: $facilityLabel',
+      'Sân: $courtLabel',
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(sport, style: theme.textTheme.titleMedium),
-        if (locationParts.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              locationParts.join(' • '),
-              style: theme.textTheme.bodySmall,
-            ),
+        Text(sportLabel, style: theme.textTheme.titleMedium),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            locationParts.join(' • '),
+            style: theme.textTheme.bodySmall,
           ),
+        ),
         const SizedBox(height: 6),
         Text(
           timeLabel,

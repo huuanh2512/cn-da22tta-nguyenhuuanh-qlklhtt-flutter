@@ -338,12 +338,25 @@ class _UserInvoicesPageState extends State<UserInvoicesPage> {
         borderColor = Colors.green.shade700;
         label = 'Đã thanh toán';
         break;
+      case 'void':
+        borderColor = Colors.grey.shade700;
+        label = 'Đã huỷ';
+        break;
+      case 'refunded':
+        borderColor = Colors.blueGrey.shade700;
+        label = 'Đã hoàn tiền';
+        break;
       case 'failed':
+        borderColor = Colors.red.shade700;
+        label = 'Thanh toán thất bại';
+        break;
       case 'overdue':
         borderColor = Colors.red.shade700;
-        label = normalized == 'failed' ? 'Thanh toán thất bại' : 'Quá hạn';
+        label = 'Quá hạn';
         break;
+      case 'unpaid':
       case 'pending':
+      case 'initiated':
       default:
         borderColor = Colors.orange.shade700;
         label = 'Chờ thanh toán';
@@ -477,7 +490,7 @@ class _UserInvoicesPageState extends State<UserInvoicesPage> {
                               ),
                       ),
                       const SizedBox(height: 12),
-                      if (refreshedInvoice.status.toLowerCase() != 'paid')
+                      if (_canPayInvoice(refreshedInvoice))
                         NeuButton(
                           onPressed: isPaying
                               ? null
@@ -617,6 +630,14 @@ class _UserInvoicesPageState extends State<UserInvoicesPage> {
         ),
       ),
     );
+  }
+
+  bool _canPayInvoice(UserInvoice invoice) {
+    final status = invoice.status.toLowerCase();
+    return status == 'pending' ||
+        status == 'unpaid' ||
+        status == 'overdue' ||
+        status == 'failed';
   }
 
   Future<void> _payInvoice(

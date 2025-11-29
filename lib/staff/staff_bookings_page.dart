@@ -13,8 +13,16 @@ import 'package:khu_lien_hop_tt/widgets/error_state_widget.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_text.dart';
 import 'package:khu_lien_hop_tt/widgets/sports_gradient_background.dart';
+import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
 
-enum _BookingStatusFilter { all, pending, confirmed, completed, cancelled, noShow }
+enum _BookingStatusFilter {
+  all,
+  pending,
+  confirmed,
+  completed,
+  cancelled,
+  noShow,
+}
 
 const Map<_BookingStatusFilter, String> _statusFilterLabels = {
   _BookingStatusFilter.all: 'Tất cả',
@@ -117,10 +125,7 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
       _errorState = null;
     });
     try {
-      await Future.wait([
-        _fetchFacilityAndSports(),
-        _fetchBookings(),
-      ]);
+      await Future.wait([_fetchFacilityAndSports(), _fetchBookings()]);
     } catch (error) {
       if (mounted) {
         setState(() => _errorState = parseApiError(error));
@@ -155,10 +160,21 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
     try {
       final from = _selectedDate == null
           ? null
-          : DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+          : DateTime(
+              _selectedDate!.year,
+              _selectedDate!.month,
+              _selectedDate!.day,
+            );
       final to = _selectedDate == null
           ? null
-          : DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 23, 59, 59);
+          : DateTime(
+              _selectedDate!.year,
+              _selectedDate!.month,
+              _selectedDate!.day,
+              23,
+              59,
+              59,
+            );
       final status = switch (_statusFilter) {
         _BookingStatusFilter.all => null,
         _BookingStatusFilter.pending => 'pending',
@@ -192,10 +208,14 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
   Iterable<StaffBooking> get _filteredBookings {
     Iterable<StaffBooking> items = _bookings;
     if ((_selectedCourtId ?? '').isNotEmpty) {
-      items = items.where((booking) => booking.booking.courtId == _selectedCourtId);
+      items = items.where(
+        (booking) => booking.booking.courtId == _selectedCourtId,
+      );
     }
     if ((_selectedSportId ?? '').isNotEmpty) {
-      items = items.where((booking) => booking.booking.sportId == _selectedSportId);
+      items = items.where(
+        (booking) => booking.booking.sportId == _selectedSportId,
+      );
     }
     final query = _searchController.text.trim().toLowerCase();
     if (query.isNotEmpty) {
@@ -203,7 +223,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
         final name = booking.customer?.name?.toLowerCase() ?? '';
         final phone = booking.customer?.phone?.toLowerCase() ?? '';
         final court = booking.court?.name?.toLowerCase() ?? '';
-        return name.contains(query) || phone.contains(query) || court.contains(query);
+        return name.contains(query) ||
+            phone.contains(query) ||
+            court.contains(query);
       });
     }
     return items;
@@ -229,7 +251,8 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
   String get _headerDateLabel {
     if (_selectedDate == null) return 'Tất cả ngày';
     final today = DateTime.now();
-    final sameDay = today.year == _selectedDate!.year &&
+    final sameDay =
+        today.year == _selectedDate!.year &&
         today.month == _selectedDate!.month &&
         today.day == _selectedDate!.day;
     if (sameDay) return 'Hôm nay · ${_weekdayFormatter.format(_selectedDate!)}';
@@ -261,27 +284,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
     if (phone == null || phone.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: phone));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Đã sao chép $phone')),
-    );
-  }
-
-  Future<void> _openDetailsSheet(StaffBooking booking) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-      ),
-      builder: (context) => _BookingDetailSheet(
-        booking: booking,
-        dateFormatter: _dateFormatter,
-        timeFormatter: _timeFormatter,
-        statusColorResolver: _statusColor,
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Đã sao chép $phone')));
   }
 
   Color _statusColor(String status) {
@@ -290,10 +295,6 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
 
   Future<void> _openStatusSheet(StaffBooking booking) async {
     final allowedTargets = _availableStatusTargets(booking.status);
-    if (allowedTargets.isEmpty) {
-      await _openDetailsSheet(booking);
-      return;
-    }
     final result = await showModalBottomSheet<_StatusUpdateResult>(
       context: context,
       isScrollControlled: true,
@@ -302,10 +303,8 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
       ),
-      builder: (context) => _StatusUpdateSheet(
-        booking: booking,
-        allowedStatuses: allowedTargets,
-      ),
+      builder: (context) =>
+          _StatusUpdateSheet(booking: booking, allowedStatuses: allowedTargets),
     );
     if (result == null) return;
     await _submitStatusChange(
@@ -348,8 +347,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
             .map((booking) => booking.id == updated.id ? updated : booking)
             .toList(growable: false);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã cập nhật trạng thái thành công')),
+      await showSuccessDialog(
+        context,
+        message: 'Đã cập nhật trạng thái thành công.',
       );
     } catch (error) {
       if (mounted) {
@@ -377,7 +377,8 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
   Future<void> _confirmFreeCourt(StaffBooking booking) async {
     if (!_canFreeCourt(booking)) return;
     final date = _dateFormatter.format(booking.start);
-    final range = '${_timeFormatter.format(booking.start)} - ${_timeFormatter.format(booking.end)}';
+    final range =
+        '${_timeFormatter.format(booking.start)} - ${_timeFormatter.format(booking.end)}';
     final courtName = booking.court?.name ?? 'sân';
     final confirmed = await showDialog<bool>(
       context: context,
@@ -454,9 +455,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
         _bookings = [booking, ..._bookings]
           ..sort((a, b) => a.start.compareTo(b.start));
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã tạo lượt đặt sân mới')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Đã tạo lượt đặt sân mới')));
     } catch (error) {
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -485,7 +486,7 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
     _focusHandled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _openDetailsSheet(focused);
+      _openStatusSheet(focused);
     });
   }
 
@@ -497,9 +498,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
   }
 
   void _redirectToVerifyEmail(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const VerifyEmailScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const VerifyEmailScreen()));
   }
 
   void _toggleSearch() {
@@ -546,9 +547,8 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
                   children: [
                     NeuText(
                       'Quản lý đặt sân',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 6),
                     _NeuBadge(
@@ -589,19 +589,23 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
 
   Widget _buildFilterSection(BuildContext context) {
     final theme = Theme.of(context);
-    final pills = _BookingStatusFilter.values.map((filter) {
-      final selected = _statusFilter == filter;
-      return _FilterPill(
-        label: _statusFilterLabels[filter]!,
-        selected: selected,
-        color: selected ? theme.colorScheme.primary : theme.colorScheme.outline,
-        onTap: () {
-          if (_statusFilter == filter) return;
-          setState(() => _statusFilter = filter);
-          _fetchBookings();
-        },
-      );
-    }).toList(growable: false);
+    final pills = _BookingStatusFilter.values
+        .map((filter) {
+          final selected = _statusFilter == filter;
+          return _FilterPill(
+            label: _statusFilterLabels[filter]!,
+            selected: selected,
+            color: selected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outline,
+            onTap: () {
+              if (_statusFilter == filter) return;
+              setState(() => _statusFilter = filter);
+              _fetchBookings();
+            },
+          );
+        })
+        .toList(growable: false);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -620,7 +624,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
             decoration: BoxDecoration(
               color: theme.colorScheme.surface,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: theme.dividerColor.withValues(alpha: 0.4)),
+              border: Border.all(
+                color: theme.dividerColor.withValues(alpha: 0.4),
+              ),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.05),
@@ -632,7 +638,8 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
             child: Column(
               children: [
                 InkWell(
-                  onTap: () => setState(() => _filtersExpanded = !_filtersExpanded),
+                  onTap: () =>
+                      setState(() => _filtersExpanded = !_filtersExpanded),
                   borderRadius: BorderRadius.circular(22),
                   child: Padding(
                     padding: const EdgeInsets.all(16),
@@ -644,7 +651,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
                             color: theme.colorScheme.primaryContainer,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: 0.3,
+                              ),
                               width: 1,
                             ),
                           ),
@@ -671,7 +680,9 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
                                 _getFilterSummary(),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                  color: theme.colorScheme.onSurface.withValues(
+                                    alpha: 0.6,
+                                  ),
                                 ),
                               ),
                             ],
@@ -717,7 +728,8 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
                                         ? 'Đang hiển thị mọi ngày'
                                         : _headerDateLabel,
                                     style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                      color: theme.colorScheme.onSurface
+                                          .withValues(alpha: 0.6),
                                     ),
                                   ),
                                 ],
@@ -725,7 +737,11 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
                             ),
                             OutlinedButton.icon(
                               icon: const Icon(Icons.calendar_today, size: 18),
-                              label: Text(_selectedDate == null ? 'Chọn ngày' : 'Đổi ngày'),
+                              label: Text(
+                                _selectedDate == null
+                                    ? 'Chọn ngày'
+                                    : 'Đổi ngày',
+                              ),
                               onPressed: _pickDate,
                             ),
                             const SizedBox(width: 8),
@@ -751,29 +767,35 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
                               label: 'Môn thể thao',
                               value: _selectedSportId,
                               items: _sports
-                                  .map((sport) => DropdownMenuItem(
-                                        value: sport.id,
-                                        child: Text(sport.name),
-                                      ))
+                                  .map(
+                                    (sport) => DropdownMenuItem(
+                                      value: sport.id,
+                                      child: Text(sport.name),
+                                    ),
+                                  )
                                   .toList(),
                               onChanged: (value) {
                                 setState(() => _selectedSportId = value);
                               },
-                              onClear: () => setState(() => _selectedSportId = null),
+                              onClear: () =>
+                                  setState(() => _selectedSportId = null),
                             ),
                             _FilterDropdown(
                               label: 'Sân',
                               value: _selectedCourtId,
                               items: _courts
-                                  .map((court) => DropdownMenuItem(
-                                        value: court.id,
-                                        child: Text(court.name),
-                                      ))
+                                  .map(
+                                    (court) => DropdownMenuItem(
+                                      value: court.id,
+                                      child: Text(court.name),
+                                    ),
+                                  )
                                   .toList(),
                               onChanged: (value) {
                                 setState(() => _selectedCourtId = value);
                               },
-                              onClear: () => setState(() => _selectedCourtId = null),
+                              onClear: () =>
+                                  setState(() => _selectedCourtId = null),
                             ),
                           ],
                         ),
@@ -825,17 +847,17 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
 
   String _getFilterSummary() {
     final parts = <String>[];
-    
+
     // Date filter
     if (_selectedDate != null) {
       parts.add(_dateFormatter.format(_selectedDate!));
     } else {
       parts.add('Tất cả ngày');
     }
-    
+
     // Status filter
     parts.add(_statusFilterLabels[_statusFilter] ?? 'Tất cả');
-    
+
     // Sport filter
     if (_selectedSportId != null) {
       final sport = _sports.cast<Sport?>().firstWhere(
@@ -846,7 +868,7 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
         parts.add(sport.name);
       }
     }
-    
+
     // Court filter
     if (_selectedCourtId != null) {
       final court = _courts.cast<StaffCourt?>().firstWhere(
@@ -857,7 +879,7 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
         parts.add(court.name);
       }
     }
-    
+
     return parts.join(' • ');
   }
 
@@ -908,7 +930,6 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
           onCall: () => _copyPhone(booking.customer?.phone),
           onFreeCourt: canFree ? () => _confirmFreeCourt(booking) : null,
           onTap: () => _openStatusSheet(booking),
-          onDetails: () => _openDetailsSheet(booking),
         );
       },
     );
@@ -922,11 +943,7 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
         SliverToBoxAdapter(child: _buildHeaderSection(context)),
         SliverToBoxAdapter(child: _buildFilterSection(context)),
         SliverPadding(
-          padding: const EdgeInsets.only(
-            left: 16,
-            right: 16,
-            bottom: 24,
-          ),
+          padding: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
           sliver: _buildBookingsSliver(),
         ),
       ],
@@ -936,10 +953,7 @@ class _StaffBookingsPageState extends State<StaffBookingsPage> {
       variant: SportsBackgroundVariant.staff,
       child: SafeArea(
         bottom: false,
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: body,
-        ),
+        child: RefreshIndicator(onRefresh: _refresh, child: body),
       ),
     );
 
@@ -994,17 +1008,14 @@ class _SummaryCard extends StatelessWidget {
         children: [
           Icon(icon, color: color, size: 32),
           const Spacer(),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
+          Text(title, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 4),
           Text(
             '$value',
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -1047,8 +1058,10 @@ class _FilterDropdown extends StatelessWidget {
                 value: value,
                 borderRadius: BorderRadius.circular(16),
                 items: [
-                  const DropdownMenuItem<String?>
-                      (value: null, child: Text('Tất cả')),
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('Tất cả'),
+                  ),
                   ...items,
                 ],
                 onChanged: (selected) {
@@ -1118,7 +1131,6 @@ class _BookingCard extends StatelessWidget {
     required this.statusLabel,
     required this.statusColor,
     required this.onTap,
-    required this.onDetails,
     required this.onCall,
     this.onFreeCourt,
   });
@@ -1127,7 +1139,6 @@ class _BookingCard extends StatelessWidget {
   final String statusLabel;
   final Color statusColor;
   final VoidCallback onTap;
-  final VoidCallback onDetails;
   final VoidCallback onCall;
   final VoidCallback? onFreeCourt;
 
@@ -1143,7 +1154,10 @@ class _BookingCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: statusColor.withValues(alpha: 0.7), width: 2.5),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.7),
+          width: 2.5,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.08),
@@ -1169,12 +1183,6 @@ class _BookingCard extends StatelessWidget {
                     icon: const Icon(Icons.call_outlined),
                     onPressed: onCall,
                   ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: 'Xem chi tiết',
-                    icon: const Icon(Icons.info_outline_rounded),
-                    onPressed: onDetails,
-                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -1185,29 +1193,25 @@ class _BookingCard extends StatelessWidget {
                 ),
               ),
               if ((customer?.phone ?? '').isNotEmpty)
-                Text(
-                  customer!.phone!,
-                  style: theme.textTheme.bodyMedium,
-                ),
+                Text(customer!.phone!, style: theme.textTheme.bodyMedium),
               const Divider(height: 24),
               _InfoRow(
                 icon: Icons.calendar_month,
-                label: DateFormat('EEEE, dd/MM/yyyy', 'vi_VN').format(booking.start),
+                label: DateFormat(
+                  'EEEE, dd/MM/yyyy',
+                  'vi_VN',
+                ).format(booking.start),
               ),
-              _InfoRow(
-                icon: Icons.schedule,
-                label: timeRange,
-              ),
+              _InfoRow(icon: Icons.schedule, label: timeRange),
               if (court != null)
-                _InfoRow(
-                  icon: Icons.sports_tennis,
-                  label: court.name ?? 'Sân',
-                ),
+                _InfoRow(icon: Icons.sports_tennis, label: court.name ?? 'Sân'),
               if (booking.booking.total != null)
                 _InfoRow(
                   icon: Icons.payments,
-                  label: NumberFormat.currency(locale: 'vi_VN', symbol: '₫')
-                      .format(booking.booking.total!),
+                  label: NumberFormat.currency(
+                    locale: 'vi_VN',
+                    symbol: '₫',
+                  ).format(booking.booking.total!),
                 ),
               if (onFreeCourt != null)
                 Padding(
@@ -1220,120 +1224,6 @@ class _BookingCard extends StatelessWidget {
                 ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BookingDetailSheet extends StatelessWidget {
-  const _BookingDetailSheet({
-    required this.booking,
-    required this.dateFormatter,
-    required this.timeFormatter,
-    required this.statusColorResolver,
-  });
-
-  final StaffBooking booking;
-  final DateFormat dateFormatter;
-  final DateFormat timeFormatter;
-  final Color Function(String status) statusColorResolver;
-
-  @override
-  Widget build(BuildContext context) {
-    final customer = booking.customer;
-    final court = booking.court;
-    final chips = <Widget>[
-      _StatusChip(
-        label: _statusDisplayLabels[booking.status] ?? booking.status,
-        color: statusColorResolver(booking.status),
-      ),
-      if (booking.preferredContactMethod != null)
-        _NeuBadge(
-          label: booking.preferredContactMethod!.toUpperCase(),
-          color: Theme.of(context).colorScheme.primaryContainer,
-        ),
-    ];
-
-    return DraggableScrollableSheet(
-      expand: false,
-      builder: (context, controller) => SingleChildScrollView(
-        controller: controller,
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 60,
-                height: 6,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    customer?.name ?? 'Khách lẻ',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                ),
-                Wrap(spacing: 8, children: chips),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(customer?.phone ?? '—'),
-            const SizedBox(height: 24),
-            _DetailBlock(
-              title: 'Chi tiết thời gian',
-              children: [
-                _DetailRow(
-                  label: 'Ngày',
-                  value: dateFormatter.format(booking.start),
-                ),
-                _DetailRow(
-                  label: 'Khung giờ',
-                  value:
-                      '${timeFormatter.format(booking.start)} - ${timeFormatter.format(booking.end)}',
-                ),
-                _DetailRow(
-                  label: 'Thời lượng',
-                  value:
-                      '${booking.end.difference(booking.start).inMinutes} phút',
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _DetailBlock(
-              title: 'Sân & dịch vụ',
-              children: [
-                if (court != null)
-                  _DetailRow(label: 'Sân', value: court.name ?? '—'),
-                if (booking.sport?.name != null)
-                  _DetailRow(label: 'Môn', value: booking.sport!.name!),
-                if (booking.staffNote != null && booking.staffNote!.isNotEmpty)
-                  _DetailRow(label: 'Ghi chú nhân viên', value: booking.staffNote!),
-              ],
-            ),
-            if (booking.booking.total != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: _DetailBlock(
-                  title: 'Thanh toán',
-                  children: [
-                    _DetailRow(
-                      label: 'Thành tiền',
-                      value: NumberFormat.currency(locale: 'vi_VN', symbol: '₫')
-                          .format(booking.booking.total!),
-                    ),
-                  ],
-                ),
-              ),
-          ],
         ),
       ),
     );
@@ -1358,10 +1248,7 @@ class _DetailBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           ...children,
         ],
@@ -1383,16 +1270,13 @@ class _DetailRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
           ),
           Text(
             value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
         ],
       ),
@@ -1421,10 +1305,9 @@ class _EmptyState extends StatelessWidget {
             Text(
               'Hãy thử thay đổi bộ lọc hoặc tạo lượt đặt mới cho khách.',
               textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.grey.shade600),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
             ),
           ],
         ),
@@ -1481,11 +1364,7 @@ class _BookingSkeleton extends StatelessWidget {
 }
 
 class _StatusUpdateResult {
-  _StatusUpdateResult({
-    required this.status,
-    this.contactMethod,
-    this.note,
-  });
+  _StatusUpdateResult({required this.status, this.contactMethod, this.note});
 
   final String status;
   final String? contactMethod;
@@ -1506,9 +1385,21 @@ class _StatusUpdateSheet extends StatefulWidget {
 }
 
 class _StatusUpdateSheetState extends State<_StatusUpdateSheet> {
-  late String _selectedStatus = widget.allowedStatuses.first;
+  String? _selectedStatus;
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.allowedStatuses.isNotEmpty) {
+      _selectedStatus = widget.allowedStatuses.first;
+    }
+    final defaultChannel = widget.booking.preferredContactMethod;
+    if (defaultChannel != null && defaultChannel.isNotEmpty) {
+      _contactController.text = defaultChannel;
+    }
+  }
 
   @override
   void dispose() {
@@ -1519,6 +1410,9 @@ class _StatusUpdateSheetState extends State<_StatusUpdateSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasActions = widget.allowedStatuses.isNotEmpty;
+
     return DraggableScrollableSheet(
       expand: false,
       builder: (context, controller) => Padding(
@@ -1537,63 +1431,183 @@ class _StatusUpdateSheetState extends State<_StatusUpdateSheet> {
               ),
             ),
             const SizedBox(height: 12),
-            Text(
-              'Cập nhật trạng thái',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: widget.allowedStatuses.map((status) {
-                final color = _statusColor(status) ?? Theme.of(context).colorScheme.primary;
-                return ChoiceChip(
-                  label: Text(_statusDisplayLabels[status] ?? status),
-                  selected: _selectedStatus == status,
-                  selectedColor: color.withValues(alpha: 0.2),
-                  onSelected: (_) => setState(() => _selectedStatus = status),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _contactController,
-              decoration: const InputDecoration(
-                labelText: 'Kênh liên hệ (nếu có)',
-                prefixIcon: Icon(Icons.call_made),
-              ),
-            ),
+            _buildBookingSummary(context),
+            const SizedBox(height: 24),
+            Text('Cập nhật trạng thái', style: theme.textTheme.titleLarge),
             const SizedBox(height: 12),
-            TextField(
-              controller: _noteController,
-              minLines: 2,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Ghi chú thêm',
-                prefixIcon: Icon(Icons.notes_rounded),
+            if (!hasActions)
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  'Lượt đặt này đã hoàn tất hoặc không còn trạng thái mới để cập nhật.',
+                  style: theme.textTheme.bodyMedium,
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              icon: const Icon(Icons.check),
-              onPressed: () {
-                Navigator.of(context).pop(
-                  _StatusUpdateResult(
-                    status: _selectedStatus,
-                    contactMethod: _contactController.text.trim().isEmpty
-                        ? null
-                        : _contactController.text.trim(),
-                    note: _noteController.text.trim().isEmpty
-                        ? null
-                        : _noteController.text.trim(),
-                  ),
-                );
-              },
-              label: const Text('Xác nhận'),
-            ),
+            if (hasActions) ...[
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: widget.allowedStatuses.map((status) {
+                  final color =
+                      _statusColor(status) ?? theme.colorScheme.primary;
+                  return ChoiceChip(
+                    label: Text(_statusDisplayLabels[status] ?? status),
+                    selected: _selectedStatus == status,
+                    selectedColor: color.withValues(alpha: 0.2),
+                    onSelected: (_) => setState(() => _selectedStatus = status),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _contactController,
+                decoration: const InputDecoration(
+                  labelText: 'Kênh liên hệ (nếu có)',
+                  prefixIcon: Icon(Icons.call_made),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _noteController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Ghi chú thêm',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                ),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                icon: const Icon(Icons.check),
+                onPressed: _selectedStatus == null
+                    ? null
+                    : () {
+                        Navigator.of(context).pop(
+                          _StatusUpdateResult(
+                            status: _selectedStatus!,
+                            contactMethod:
+                                _contactController.text.trim().isEmpty
+                                ? null
+                                : _contactController.text.trim(),
+                            note: _noteController.text.trim().isEmpty
+                                ? null
+                                : _noteController.text.trim(),
+                          ),
+                        );
+                      },
+                label: const Text('Xác nhận'),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildBookingSummary(BuildContext context) {
+    final booking = widget.booking;
+    final customer = booking.customer;
+    final court = booking.court;
+    final theme = Theme.of(context);
+    final dateFormatter = DateFormat('EEEE, dd/MM/yyyy', 'vi_VN');
+    final timeFormatter = DateFormat('HH:mm');
+    final moneyFormatter = NumberFormat.currency(locale: 'vi_VN', symbol: '₫');
+    final chips = <Widget>[
+      _StatusChip(
+        label: _statusDisplayLabels[booking.status] ?? booking.status,
+        color: _statusColor(booking.status) ?? theme.colorScheme.primary,
+      ),
+      if ((booking.preferredContactMethod ?? '').isNotEmpty)
+        _NeuBadge(
+          label: booking.preferredContactMethod!.toUpperCase(),
+          color: theme.colorScheme.primaryContainer,
+        ),
+    ];
+
+    final List<Widget> detailSections = [
+      _DetailBlock(
+        title: 'Chi tiết thời gian',
+        children: [
+          _DetailRow(label: 'Ngày', value: dateFormatter.format(booking.start)),
+          _DetailRow(
+            label: 'Khung giờ',
+            value:
+                '${timeFormatter.format(booking.start)} - ${timeFormatter.format(booking.end)}',
+          ),
+          _DetailRow(
+            label: 'Thời lượng',
+            value: '${booking.end.difference(booking.start).inMinutes} phút',
+          ),
+        ],
+      ),
+    ];
+
+    final hasCourtInfo =
+        court != null ||
+        booking.sport != null ||
+        (booking.staffNote != null && booking.staffNote!.isNotEmpty);
+    if (hasCourtInfo) {
+      detailSections.add(const SizedBox(height: 16));
+      detailSections.add(
+        _DetailBlock(
+          title: 'Sân & dịch vụ',
+          children: [
+            if (court != null)
+              _DetailRow(label: 'Sân', value: court.name ?? '—'),
+            if (booking.sport?.name != null)
+              _DetailRow(label: 'Môn', value: booking.sport!.name!),
+            if ((booking.staffNote ?? '').isNotEmpty)
+              _DetailRow(label: 'Ghi chú nhân viên', value: booking.staffNote!),
+          ],
+        ),
+      );
+    }
+
+    final total = booking.booking.total;
+    if (total != null) {
+      detailSections.add(const SizedBox(height: 16));
+      detailSections.add(
+        _DetailBlock(
+          title: 'Thanh toán',
+          children: [
+            _DetailRow(
+              label: 'Thành tiền',
+              value: moneyFormatter.format(total),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    customer?.name ?? 'Khách lẻ',
+                    style: theme.textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(customer?.phone ?? '—'),
+                ],
+              ),
+            ),
+            Wrap(spacing: 8, runSpacing: 8, children: chips),
+          ],
+        ),
+        const SizedBox(height: 24),
+        ...detailSections,
+      ],
     );
   }
 
@@ -1697,10 +1711,12 @@ class _CreateBookingSheetState extends State<_CreateBookingSheet> {
                 initialValue: _sportsId,
                 decoration: const InputDecoration(labelText: 'Môn thể thao'),
                 items: widget.sports
-                    .map((sport) => DropdownMenuItem(
-                          value: sport.id,
-                          child: Text(sport.name),
-                        ))
+                    .map(
+                      (sport) => DropdownMenuItem(
+                        value: sport.id,
+                        child: Text(sport.name),
+                      ),
+                    )
                     .toList(),
                 validator: (value) => value == null ? 'Chọn môn' : null,
                 onChanged: (value) => setState(() => _sportsId = value),
@@ -1710,10 +1726,12 @@ class _CreateBookingSheetState extends State<_CreateBookingSheet> {
                 initialValue: _courtId,
                 decoration: const InputDecoration(labelText: 'Chọn sân'),
                 items: widget.courts
-                    .map((court) => DropdownMenuItem(
-                          value: court.id,
-                          child: Text(court.name),
-                        ))
+                    .map(
+                      (court) => DropdownMenuItem(
+                        value: court.id,
+                        child: Text(court.name),
+                      ),
+                    )
                     .toList(),
                 validator: (value) => value == null ? 'Chọn sân' : null,
                 onChanged: (value) => setState(() => _courtId = value),
@@ -1721,7 +1739,9 @@ class _CreateBookingSheetState extends State<_CreateBookingSheet> {
               const SizedBox(height: 12),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text('Ngày: ${DateFormat('dd/MM/yyyy').format(_selectedDate)}'),
+                title: Text(
+                  'Ngày: ${DateFormat('dd/MM/yyyy').format(_selectedDate)}',
+                ),
                 subtitle: const Text('Chạm để đổi ngày'),
                 trailing: const Icon(Icons.calendar_today),
                 onTap: () async {
@@ -1767,25 +1787,32 @@ class _CreateBookingSheetState extends State<_CreateBookingSheet> {
               TextFormField(
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Tên khách hàng'),
-                validator: (value) => value == null || value.isEmpty ? 'Nhập tên' : null,
+                validator: (value) =>
+                    value == null || value.isEmpty ? 'Nhập tên' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _phoneController,
                 decoration: const InputDecoration(labelText: 'Số điện thoại'),
-                validator: (value) => value == null || value.isEmpty ? 'Nhập số điện thoại' : null,
+                validator: (value) => value == null || value.isEmpty
+                    ? 'Nhập số điện thoại'
+                    : null,
                 keyboardType: TextInputType.phone,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _emailController,
-                decoration: const InputDecoration(labelText: 'Email (tuỳ chọn)'),
+                decoration: const InputDecoration(
+                  labelText: 'Email (tuỳ chọn)',
+                ),
                 keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _contactController,
-                decoration: const InputDecoration(labelText: 'Kênh liên hệ (tuỳ chọn)'),
+                decoration: const InputDecoration(
+                  labelText: 'Kênh liên hệ (tuỳ chọn)',
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -1827,13 +1854,15 @@ class _CreateBookingSheetState extends State<_CreateBookingSheet> {
                       end: end,
                       customerName: _nameController.text.trim(),
                       customerPhone: _phoneController.text.trim(),
-                      customerEmail:
-                          _emailController.text.trim().isEmpty ? null : _emailController.text.trim(),
+                      customerEmail: _emailController.text.trim().isEmpty
+                          ? null
+                          : _emailController.text.trim(),
                       contactMethod: _contactController.text.trim().isEmpty
                           ? null
                           : _contactController.text.trim(),
-                      staffNote:
-                          _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+                      staffNote: _noteController.text.trim().isEmpty
+                          ? null
+                          : _noteController.text.trim(),
                       confirmImmediately: _confirmNow,
                     ),
                   );
@@ -1848,10 +1877,7 @@ class _CreateBookingSheetState extends State<_CreateBookingSheet> {
 }
 
 class _SearchField extends StatelessWidget {
-  const _SearchField({
-    required this.controller,
-    required this.onChanged,
-  });
+  const _SearchField({required this.controller, required this.onChanged});
 
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
@@ -1872,9 +1898,7 @@ class _SearchField extends StatelessWidget {
                   onChanged('');
                 },
               ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(28),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(28)),
         filled: true,
       ),
       onChanged: onChanged,
@@ -1898,9 +1922,9 @@ class _NeuBadge extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -1959,10 +1983,7 @@ class _InfoRow extends StatelessWidget {
           Icon(icon, size: 18),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
+            child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
           ),
         ],
       ),
@@ -1986,10 +2007,7 @@ class _StatusChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.bold,
-        ),
+        style: TextStyle(color: color, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -1998,7 +2016,9 @@ class _StatusChip extends StatelessWidget {
 extension _ColorDarkener on Color {
   Color darken([double amount = 0.1]) {
     final hsl = HSLColor.fromColor(this);
-    final adjusted = hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
+    final adjusted = hsl.withLightness(
+      (hsl.lightness - amount).clamp(0.0, 1.0),
+    );
     return adjusted.toColor();
   }
 }

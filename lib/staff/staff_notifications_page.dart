@@ -316,10 +316,7 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
     );
 
     final detailNotification = _decorateNotification(
-      latest.copyWith(
-        read: true,
-        readAt: latest.readAt ?? DateTime.now(),
-      ),
+      latest.copyWith(read: true, readAt: latest.readAt ?? DateTime.now()),
     );
 
     if (!mounted) return;
@@ -436,18 +433,17 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     final tabBar = _buildTabBar(context);
     final surfaceColor = Theme.of(context).colorScheme.surface;
-    
+
     return PreferredSize(
-      preferredSize: Size.fromHeight(kToolbarHeight + tabBar.preferredSize.height),
+      preferredSize: Size.fromHeight(
+        kToolbarHeight + tabBar.preferredSize.height,
+      ),
       child: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFFB2DFDB),
-              Color(0xFF80CBC4),
-            ],
+            colors: [Color(0xFFB2DFDB), Color(0xFF80CBC4)],
           ),
         ),
         child: SafeArea(
@@ -484,7 +480,9 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.done_all_rounded),
-                      onPressed: _markingAll || _allNotifications.every((item) => item.read)
+                      onPressed:
+                          _markingAll ||
+                              _allNotifications.every((item) => item.read)
                           ? null
                           : _markAllRead,
                     ),
@@ -494,7 +492,9 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
               DecoratedBox(
                 decoration: BoxDecoration(
                   color: surfaceColor,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.05),
@@ -527,20 +527,26 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
         ],
       ),
       labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-      unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+      unselectedLabelStyle: const TextStyle(
+        fontWeight: FontWeight.w600,
+        fontSize: 13,
+      ),
       labelColor: Colors.white,
       unselectedLabelColor: Colors.black,
       tabs: _NotificationFilter.values.map((filter) {
         final count = _notificationsForFilter(filter).length;
-        final isSelected = _tabController.index == _NotificationFilter.values.indexOf(filter);
+        final isSelected =
+            _tabController.index == _NotificationFilter.values.indexOf(filter);
         return Tab(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: isSelected ? null : BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.black, width: 2),
-            ),
+            decoration: isSelected
+                ? null
+                : BoxDecoration(
+                    color: const Color(0xFFF5F5F5),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.black, width: 2),
+                  ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -610,7 +616,7 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
             color: theme.colorScheme.surface,
             borderColor: Colors.black,
             borderWidth: 3,
-            shadowColor: Colors.black.withValues(alpha:0.25),
+            shadowColor: Colors.black.withValues(alpha: 0.25),
             offset: const Offset(8, 8),
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -639,7 +645,7 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
                     borderRadius: BorderRadius.circular(16),
                     borderColor: Colors.black,
                     buttonColor: theme.colorScheme.primary,
-                    shadowColor: Colors.black.withValues(alpha:0.35),
+                    shadowColor: Colors.black.withValues(alpha: 0.35),
                     child: const Text(
                       'Thử lại',
                       style: TextStyle(
@@ -678,11 +684,7 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
       child: notifications.isEmpty
           ? ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.only(
-                left: 32,
-                right: 32,
-                bottom: 24,
-              ),
+              padding: const EdgeInsets.only(left: 32, right: 32, bottom: 24),
               children: [
                 SizedBox(height: MediaQuery.of(context).size.height * 0.15),
                 _EmptyState(filter: filter),
@@ -812,10 +814,7 @@ class _StaffNotificationsPageState extends State<StaffNotificationsPage>
       );
     }
 
-    return Scaffold(
-      appBar: _buildAppBar(context),
-      body: _buildBody(),
-    );
+    return Scaffold(appBar: _buildAppBar(context), body: _buildBody());
   }
 }
 
@@ -858,7 +857,7 @@ class _NotificationCard extends StatelessWidget {
       color: cardColor,
       borderColor: Colors.black,
       borderWidth: notification.read ? 2 : 3,
-      shadowColor: Colors.black.withValues(alpha:0.25),
+      shadowColor: Colors.black.withValues(alpha: 0.25),
       offset: notification.read ? const Offset(4, 4) : const Offset(6, 6),
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
@@ -868,170 +867,170 @@ class _NotificationCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: priorityColor, width: 2),
-                      ),
-                      child: Icon(channelIcon, color: priorityColor),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: priorityColor, width: 2),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  notification.title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                    child: Icon(channelIcon, color: priorityColor),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                notification.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              if (!notification.read)
-                                Container(
-                                  width: 10,
-                                  height: 10,
-                                  margin: const EdgeInsets.only(left: 8),
-                                  decoration: BoxDecoration(
-                                    color: theme.colorScheme.primary,
-                                    shape: BoxShape.circle,
-                                  ),
+                            ),
+                            if (!notification.read)
+                              Container(
+                                width: 10,
+                                height: 10,
+                                margin: const EdgeInsets.only(left: 8),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primary,
+                                  shape: BoxShape.circle,
                                 ),
-                              PopupMenuButton<String>(
-                                tooltip: 'Tùy chọn',
-                                onSelected: (value) {
-                                  if (value == 'read' && !notification.read) {
-                                    onMarkRead();
-                                  } else if (value == 'detail') {
-                                    onTap();
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  if (!notification.read)
-                                    const PopupMenuItem(
-                                      value: 'read',
-                                      child: Text('Đánh dấu đã đọc'),
-                                    ),
+                              ),
+                            PopupMenuButton<String>(
+                              tooltip: 'Tùy chọn',
+                              onSelected: (value) {
+                                if (value == 'read' && !notification.read) {
+                                  onMarkRead();
+                                } else if (value == 'detail') {
+                                  onTap();
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                if (!notification.read)
                                   const PopupMenuItem(
-                                    value: 'detail',
-                                    child: Text('Xem chi tiết'),
+                                    value: 'read',
+                                    child: Text('Đánh dấu đã đọc'),
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            notification.message,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
+                                const PopupMenuItem(
+                                  value: 'detail',
+                                  child: Text('Xem chi tiết'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          notification.message,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _StatusChip(
+                    label: statusLabel,
+                    color: notification.read
+                        ? theme.colorScheme.outline
+                        : theme.colorScheme.primary,
+                  ),
+                  _StatusChip(
+                    label: priorityLabel,
+                    color: priorityColor,
+                    icon: Icons.flag_outlined,
+                  ),
+                  if (notification.channel != null &&
+                      notification.channel!.isNotEmpty)
                     _StatusChip(
-                      label: statusLabel,
-                      color: notification.read
-                          ? theme.colorScheme.outline
-                          : theme.colorScheme.primary,
+                      label: notification.channel!,
+                      color: theme.colorScheme.secondary,
+                      icon: Icons.layers_outlined,
                     ),
+                  if (isImportant)
                     _StatusChip(
-                      label: priorityLabel,
-                      color: priorityColor,
-                      icon: Icons.flag_outlined,
+                      label: 'Quan trọng',
+                      color: theme.colorScheme.error,
+                      icon: Icons.priority_high_rounded,
                     ),
-                    if (notification.channel != null &&
-                        notification.channel!.isNotEmpty)
-                      _StatusChip(
-                        label: notification.channel!,
-                        color: theme.colorScheme.secondary,
-                        icon: Icons.layers_outlined,
-                      ),
-                    if (isImportant)
-                      _StatusChip(
-                        label: 'Quan trọng',
-                        color: theme.colorScheme.error,
-                        icon: Icons.priority_high_rounded,
-                      ),
-                    ...extraChips,
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.schedule_rounded,
-                      size: 16,
+                  ...extraChips,
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    Icons.schedule_rounded,
+                    size: 16,
+                    color: theme.colorScheme.outline,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    timestamp,
+                    style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.outline,
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      timestamp,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.outline,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (!notification.read)
-                      SizedBox(
-                        height: 36,
-                        child: NeuButton(
-                          onPressed: marking ? null : onMarkRead,
-                          buttonHeight: 36,
-                          buttonWidth: 160,
-                          borderRadius: BorderRadius.circular(12),
-                          borderColor: Colors.black,
-                          buttonColor: theme.colorScheme.primaryContainer,
-                          shadowColor: Colors.black.withValues(alpha:0.3),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              if (marking)
-                                const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              else
-                                const Icon(Icons.done_outlined, size: 16),
-                              const SizedBox(width: 6),
-                              Text(
-                                marking ? 'Đang xử lý...' : 'Đánh dấu đã đọc',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
+                  ),
+                  const Spacer(),
+                  if (!notification.read)
+                    SizedBox(
+                      height: 36,
+                      child: NeuButton(
+                        onPressed: marking ? null : onMarkRead,
+                        buttonHeight: 36,
+                        buttonWidth: 160,
+                        borderRadius: BorderRadius.circular(12),
+                        borderColor: Colors.black,
+                        buttonColor: theme.colorScheme.primaryContainer,
+                        shadowColor: Colors.black.withValues(alpha: 0.3),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (marking)
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
                                 ),
+                              )
+                            else
+                              const Icon(Icons.done_outlined, size: 16),
+                            const SizedBox(width: 6),
+                            Text(
+                              marking ? 'Đang xử lý...' : 'Đánh dấu đã đọc',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                  ],
-                ),
-              ],
+                    ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -1158,7 +1157,7 @@ class _EmptyState extends StatelessWidget {
       color: theme.colorScheme.surface,
       borderColor: Colors.black,
       borderWidth: 3,
-      shadowColor: Colors.black.withValues(alpha:0.25),
+      shadowColor: Colors.black.withValues(alpha: 0.25),
       offset: const Offset(8, 8),
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -1285,12 +1284,10 @@ class _NotificationDetailBottomSheet extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
               borderColor: Colors.black,
               buttonColor: theme.colorScheme.secondaryContainer,
-              shadowColor: Colors.black.withValues(alpha:0.35),
+              shadowColor: Colors.black.withValues(alpha: 0.35),
               child: const Text(
                 'Đóng',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ],

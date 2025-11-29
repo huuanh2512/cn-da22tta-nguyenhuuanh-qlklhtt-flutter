@@ -5,6 +5,7 @@ import 'package:khu_lien_hop_tt/models/staff_invoice.dart';
 import 'package:khu_lien_hop_tt/services/api_service.dart';
 import 'package:khu_lien_hop_tt/widgets/sports_gradient_background.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
+import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
 
 const Map<String, String> _invoiceStatusLabels = {
   'all': 'Tất cả',
@@ -239,34 +240,38 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
     return text.startsWith(prefix) ? text.substring(prefix.length) : text;
   }
 
-  Future<void> _performInvoiceAction(
+  Future<bool> _performInvoiceAction(
     String invoiceId,
     Future<void> Function() action, {
     String? successMessage,
   }) async {
     setState(() => _busyInvoices.add(invoiceId));
+    var succeeded = false;
     try {
       await action();
-      if (!mounted) return;
-      if (successMessage != null && successMessage.isNotEmpty) {
+      succeeded = true;
+      if (mounted && successMessage != null && successMessage.isNotEmpty) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(successMessage)));
       }
     } catch (e) {
-      if (!mounted) return;
-      final theme = Theme.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_friendlyError(e)),
-          backgroundColor: theme.colorScheme.error,
-        ),
-      );
+      if (mounted) {
+        final theme = Theme.of(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_friendlyError(e)),
+            backgroundColor: theme.colorScheme.error,
+          ),
+        );
+      }
+      succeeded = false;
     } finally {
       if (mounted) {
         setState(() => _busyInvoices.remove(invoiceId));
       }
     }
+    return succeeded;
   }
 
   Future<void> _sendReminder(StaffInvoice invoice) async {
@@ -327,7 +332,7 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
     );
     if (confirm != true) return;
 
-    await _performInvoiceAction(invoice.id, () async {
+    final success = await _performInvoiceAction(invoice.id, () async {
       final updated = await _api.staffUpdateInvoiceStatus(
         invoice.id,
         status: 'paid',
@@ -335,7 +340,15 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
       );
       if (!mounted) return;
       _applyInvoiceUpdate(updated);
-    }, successMessage: 'Đã cập nhật trạng thái hoá đơn.');
+    });
+
+    if (!mounted || !success) return;
+
+    await showSuccessDialog(
+      context,
+      message: 'Đã cập nhật trạng thái hoá đơn thành công.',
+    );
+    await _load(showSpinner: false);
   }
 
   String _formatDate(DateTime? value) {
@@ -502,7 +515,7 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
         color: const Color(0xFFFFF8DC),
         borderColor: Colors.black,
         borderWidth: 3,
-        shadowColor: Colors.black.withValues(alpha:0.3),
+        shadowColor: Colors.black.withValues(alpha: 0.3),
         offset: const Offset(6, 6),
         child: Column(
           children: [
@@ -539,7 +552,7 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
                             _getFilterSummary(),
                             style: TextStyle(
                               fontSize: 12,
-                              color: Colors.black.withValues(alpha:0.6),
+                              color: Colors.black.withValues(alpha: 0.6),
                             ),
                           ),
                         ],
@@ -654,24 +667,26 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
 
   String _getFilterSummary() {
     final parts = <String>[];
-    
+
     // Date filter
-    if (_quickFilter == _DateQuickFilter.custom && _from != null && _to != null) {
+    if (_quickFilter == _DateQuickFilter.custom &&
+        _from != null &&
+        _to != null) {
       parts.add('${_formatDate(_from)} - ${_formatDate(_to)}');
     } else {
       parts.add(_quickLabel(_quickFilter));
     }
-    
+
     // Status filter
     if (_statusFilter != 'all') {
       parts.add(_invoiceStatusLabels[_statusFilter] ?? _statusFilter);
     }
-    
+
     // Payment filter
     if (_paymentFilter != 'all') {
       parts.add(_paymentFilters[_paymentFilter] ?? _paymentFilter);
     }
-    
+
     return parts.join(' • ');
   }
 
@@ -696,7 +711,10 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
                 ),
           filled: true,
           fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 18,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(18),
             borderSide: const BorderSide(color: Colors.black, width: 2.4),
@@ -749,12 +767,7 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
     final invoices = _filteredInvoices;
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 8,
-        bottom: 24,
-      ),
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 24),
       children: [
         _SummaryCard(summary: _summary, formatCurrency: _formatCurrency),
         const SizedBox(height: 12),
@@ -824,7 +837,7 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
+      builder: (sheetContext) {
         final busy = _busyInvoices.contains(invoice.id);
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
@@ -836,7 +849,12 @@ class _StaffInvoicesPageState extends State<StaffInvoicesPage> {
             paymentLabel: _paymentLabelForInvoice(invoice),
             statusLabel: _invoiceStatusLabels[invoice.status] ?? invoice.status,
             statusColor: _statusColor(invoice.status, Theme.of(context)),
-            onMarkPaid: busy ? null : () => _markInvoicePaid(invoice),
+            onMarkPaid: busy
+                ? null
+                : () {
+                    Navigator.of(sheetContext).pop();
+                    _markInvoicePaid(invoice);
+                  },
             onSendReminder: busy ? null : () => _sendReminder(invoice),
             isBusy: busy,
           ),
@@ -876,7 +894,7 @@ class _SummaryCard extends StatelessWidget {
       color: const Color(0xFFE6F7FF),
       borderColor: Colors.black,
       borderWidth: 3,
-      shadowColor: Colors.black.withValues(alpha:0.25),
+      shadowColor: Colors.black.withValues(alpha: 0.25),
       offset: const Offset(8, 8),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -970,7 +988,7 @@ class _SummaryInfoTile extends StatelessWidget {
       color: Colors.white,
       borderColor: color,
       borderWidth: 2,
-      shadowColor: Colors.black.withValues(alpha:0.2),
+      shadowColor: Colors.black.withValues(alpha: 0.2),
       offset: const Offset(4, 4),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -979,9 +997,7 @@ class _SummaryInfoTile extends StatelessWidget {
           children: [
             Text(
               label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: color,
                 fontWeight: FontWeight.w700,
               ),
@@ -1035,7 +1051,7 @@ class _InvoiceCard extends StatelessWidget {
       color: cardColor,
       borderColor: Colors.black,
       borderWidth: 3,
-      shadowColor: Colors.black.withValues(alpha:0.25),
+      shadowColor: Colors.black.withValues(alpha: 0.25),
       offset: const Offset(6, 6),
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
@@ -1151,10 +1167,7 @@ class _InvoiceCard extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontWeight: FontWeight.w700,
-          color: color,
-        ),
+        style: TextStyle(fontWeight: FontWeight.w700, color: color),
       ),
     );
   }
@@ -1173,7 +1186,7 @@ class _EmptyInvoicesState extends StatelessWidget {
         color: theme.colorScheme.surface,
         borderColor: Colors.black,
         borderWidth: 3,
-        shadowColor: Colors.black.withValues(alpha:0.25),
+        shadowColor: Colors.black.withValues(alpha: 0.25),
         offset: const Offset(8, 8),
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -1245,10 +1258,7 @@ class _InvoiceDetailSheet extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontWeight: FontWeight.w700,
-          color: color,
-        ),
+        style: TextStyle(fontWeight: FontWeight.w700, color: color),
       ),
     );
   }
@@ -1351,7 +1361,7 @@ class _InvoiceDetailSheet extends StatelessWidget {
                     color: Colors.white,
                     borderColor: Colors.black,
                     borderWidth: 2,
-                    shadowColor: Colors.black.withValues(alpha:0.15),
+                    shadowColor: Colors.black.withValues(alpha: 0.15),
                     offset: const Offset(4, 4),
                     child: ListTile(
                       title: Text(
@@ -1395,7 +1405,7 @@ class _InvoiceDetailSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(16),
                       borderColor: Colors.black,
                       buttonColor: theme.colorScheme.primary,
-                      shadowColor: Colors.black.withValues(alpha:0.35),
+                      shadowColor: Colors.black.withValues(alpha: 0.35),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1409,7 +1419,11 @@ class _InvoiceDetailSheet extends StatelessWidget {
                               ),
                             )
                           else
-                            const Icon(Icons.verified_rounded, color: Colors.white, size: 18),
+                            const Icon(
+                              Icons.verified_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
                           const SizedBox(width: 8),
                           Text(
                             isBusy ? 'Đang xử lý...' : 'Xác nhận đã thanh toán',
@@ -1432,17 +1446,18 @@ class _InvoiceDetailSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(16),
                       borderColor: Colors.black,
                       buttonColor: theme.colorScheme.secondaryContainer,
-                      shadowColor: Colors.black.withValues(alpha:0.35),
+                      shadowColor: Colors.black.withValues(alpha: 0.35),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.notifications_active_outlined, size: 18),
+                          const Icon(
+                            Icons.notifications_active_outlined,
+                            size: 18,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Nhắc nhở thanh toán',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                            ),
+                            style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ],
                       ),
