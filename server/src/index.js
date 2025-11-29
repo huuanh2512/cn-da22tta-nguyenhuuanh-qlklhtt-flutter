@@ -808,7 +808,7 @@ async function ensureBookingInvoice(bookingDoc, { issuedAt } = {}) {
     }) || {},
   };
 
-  const result = await db.collection('invoices').findOneAndUpdate(
+    const result = await db.collection('invoices').findOneAndUpdate(
     { bookingId },
     updateDoc,
     { upsert: true, returnDocument: ReturnDocument.AFTER },
@@ -832,7 +832,7 @@ async function voidBookingInvoice(bookingDoc, { reason = 'booking_cancelled' } =
     },
   };
 
-  const result = await db.collection('invoices').findOneAndUpdate(
+    const result = await db.collection('invoices').findOneAndUpdate(
     { bookingId },
     update,
     { returnDocument: ReturnDocument.AFTER },
@@ -942,7 +942,10 @@ function shapeStaffInvoice(doc) {
       : 'VND');
 
   const { payments, totalPaid, lastPaymentAt } = computePaymentTotals(doc.payments);
-  const outstanding = Math.max(0, amount - totalPaid);
+  const status = typeof doc.status === 'string' && doc.status.trim().length ? doc.status.trim() : 'unpaid';
+  const inactiveStatuses = new Set(['void', 'cancelled', 'canceled', 'refunded']);
+  const isInactive = inactiveStatuses.has(status.toLowerCase());
+  const outstanding = isInactive ? 0 : Math.max(0, amount - totalPaid);
 
   const bookingInfo = doc.booking ? cleanObject({
     _id: normalizeIdString(doc.booking._id),
@@ -967,7 +970,7 @@ function shapeStaffInvoice(doc) {
     bookingId: normalizeIdString(doc.bookingId ?? doc.booking?._id),
     amount,
     currency,
-    status: typeof doc.status === 'string' && doc.status.trim().length ? doc.status.trim() : 'unpaid',
+    status,
     issuedAt: doc.issuedAt ?? doc.createdAt ?? doc.booking?.start ?? null,
     lastPaymentAt,
     totalPaid,
@@ -3576,12 +3579,18 @@ app.get('/api/staff/invoices', async (req, res, next) => {
     const invoices = await db.collection('invoices').aggregate(pipeline).toArray();
     const shaped = invoices.map((doc) => shapeStaffInvoice(doc)).filter(Boolean);
 
+    const inactiveStatuses = new Set(['void', 'cancelled', 'canceled', 'refunded']);
     const summary = shaped.reduce((acc, invoice) => {
       acc.invoiceCount += 1;
-      acc.totalInvoiced += invoice?.amount ?? 0;
-      acc.totalPaid += invoice?.totalPaid ?? 0;
-      acc.totalOutstanding += invoice?.outstanding ?? 0;
-      acc.totalRevenue += invoice?.totalPaid ?? 0;
+      const statusKey = typeof invoice?.status === 'string' ? invoice.status.trim().toLowerCase() : '';
+      const isInactive = inactiveStatuses.has(statusKey);
+      const amountContribution = isInactive ? 0 : (invoice?.amount ?? 0);
+      const paidContribution = isInactive ? 0 : (invoice?.totalPaid ?? 0);
+      const outstandingContribution = isInactive ? 0 : (invoice?.outstanding ?? 0);
+      acc.totalInvoiced += amountContribution;
+      acc.totalPaid += paidContribution;
+      acc.totalOutstanding += outstandingContribution;
+      acc.totalRevenue += paidContribution;
       return acc;
     }, {
       invoiceCount: 0,
@@ -3628,6 +3637,16 @@ app.patch('/api/staff/invoices/:id/status', async (req, res, next) => {
     }
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const invoiceIdCandidates = buildIdCandidates(
+      (invoiceDoc._id && typeof invoiceDoc._id.toHexString === 'function')
+        ? invoiceDoc._id.toHexString()
+        : invoiceDoc._id,
+    );
+    if (!invoiceIdCandidates.some((candidate) => candidate instanceof ObjectId && candidate.equals(invoiceDoc._id))) {
+      invoiceIdCandidates.push(invoiceDoc._id);
+    }
+    const invoiceAmountValue = normalizePaymentAmount(invoiceDoc.amount ?? bookingDoc.amount ?? bookingDoc.total ?? 0);
+    let pendingPaymentDoc = null;
     const $set = {};
     const $unset = {};
 
@@ -3678,6 +3697,38 @@ app.patch('/api/staff/invoices/:id/status', async (req, res, next) => {
       }
     }
 
+    if (body.paid === true) {
+      const existingPayments = await db.collection('payments')
+        .find({ invoiceId: { $in: invoiceIdCandidates } })
+        .toArray();
+      const { totalPaid: currentPaid } = computePaymentTotals(existingPayments);
+      const outstandingBefore = Math.max(0, invoiceAmountValue - currentPaid);
+      if (outstandingBefore > 0) {
+        const now = new Date();
+        pendingPaymentDoc = cleanObject({
+          invoiceId: invoiceDoc._id,
+          provider: typeof body.paymentProvider === 'string' && body.paymentProvider.trim().length
+            ? body.paymentProvider.trim()
+            : 'staff-app',
+          method: typeof body.paymentMethod === 'string' && body.paymentMethod.trim().length
+            ? body.paymentMethod.trim()
+            : 'manual',
+          amount: outstandingBefore,
+          currency: invoiceDoc.currency || bookingDoc.currency || 'VND',
+          status: 'succeeded',
+          createdAt: now,
+          processedAt: now,
+          meta: cleanObject({
+            source: 'staff.mark-paid',
+            actorId: staffUser._id,
+            note: typeof body.paymentNote === 'string' && body.paymentNote.trim().length
+              ? body.paymentNote.trim().substring(0, 240)
+              : undefined,
+          }),
+        }) || null;
+      }
+    }
+
     if (!Object.keys($set).length && !Object.keys($unset).length) {
       return res.status(400).json({ error: 'Không có thay đổi nào được gửi lên' });
     }
@@ -3689,6 +3740,18 @@ app.patch('/api/staff/invoices/:id/status', async (req, res, next) => {
     if (Object.keys($unset).length) updateDoc.$unset = $unset;
 
     await db.collection('invoices').updateOne({ _id: invoiceDoc._id }, updateDoc);
+
+    if (pendingPaymentDoc) {
+      const insertResult = await db.collection('payments').insertOne(pendingPaymentDoc);
+      pendingPaymentDoc._id = insertResult.insertedId;
+      await recordAudit(req, {
+        actorId: staffUser._id,
+        action: 'staff.manual-payment',
+        resource: 'payment',
+        resourceId: insertResult.insertedId,
+        changes: sanitizeAuditData(pendingPaymentDoc),
+      });
+    }
 
     await recordAudit(req, {
       actorId: staffUser._id,
