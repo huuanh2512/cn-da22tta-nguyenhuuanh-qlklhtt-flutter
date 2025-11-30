@@ -13,6 +13,7 @@ import 'package:khu_lien_hop_tt/utils/api_error_utils.dart';
 import 'package:khu_lien_hop_tt/widgets/error_state_widget.dart';
 import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 class _TeamVariantOption {
   final String id;
@@ -801,13 +802,11 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (loading)
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(textColor),
-                ),
+              NeoLoadingDot(
+                size: 18,
+                fillColor: textColor,
+                borderColor: Colors.black,
+                shadowColor: Colors.black.withValues(alpha: 0.55),
               )
             else
               Icon(icon, size: 18, color: textColor),
@@ -1230,11 +1229,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                         ),
                         if (_loadingCourts) ...[
                           const SizedBox(width: 12),
-                          const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
+                          const NeoLoadingDot(size: 20, fillColor: Colors.white),
                         ],
                       ],
                     ),
@@ -1607,7 +1602,12 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
 
     Widget body;
     if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const Center(
+        child: NeoLoadingCard(
+          label: 'Đang tải lời mời...',
+          width: 260,
+        ),
+      );
     } else if (_error != null) {
       body = Center(
         child: ErrorStateWidget(
@@ -1898,11 +1898,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                     if (_loadingCourts)
                       const Padding(
                         padding: EdgeInsets.all(8),
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
+                        child: NeoLoadingDot(size: 20, fillColor: Colors.white),
                       )
                     else
                       const Icon(Icons.arrow_drop_down, color: Colors.black),
@@ -2111,13 +2107,9 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (_submitting)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
+                      const NeoLoadingDot(
+                        size: 18,
+                        fillColor: Colors.white,
                       )
                     else
                       const Icon(Icons.send_outlined, color: Colors.white, size: 20),
@@ -2512,13 +2504,9 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (cancelling)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
+                  const NeoLoadingDot(
+                    size: 18,
+                    fillColor: Colors.white,
                   )
                 else
                   const Icon(Icons.cancel_schedule_send_outlined, color: Colors.white, size: 18),

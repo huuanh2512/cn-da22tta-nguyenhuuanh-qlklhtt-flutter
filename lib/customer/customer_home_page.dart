@@ -22,6 +22,7 @@ import 'package:khu_lien_hop_tt/utils/api_error_utils.dart';
 import 'package:khu_lien_hop_tt/widgets/sports_gradient_background.dart';
 import 'package:khu_lien_hop_tt/widgets/error_state_widget.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 class CustomerHomePage extends StatefulWidget {
   const CustomerHomePage({super.key});
@@ -500,7 +501,13 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      builder: (_) => const Center(
+        child: NeoLoadingCard(
+          label: 'Đang chuẩn bị đặt nhanh...',
+          width: 240,
+          height: 180,
+        ),
+      ),
     );
 
     try {
@@ -956,7 +963,12 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     if (_loadingOverview) {
       body = const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: NeoLoadingCard(
+            label: 'Đang tải lời mời...',
+            width: 240,
+          ),
+        ),
       );
     } else if (_matchRequestsError != null) {
       body = _buildSectionError(
@@ -1508,11 +1520,7 @@ class AsyncSection extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Center(
-          child: SizedBox(
-            height: 28,
-            width: 28,
-            child: CircularProgressIndicator(strokeWidth: 3),
-          ),
+          child: NeoLoadingDot(size: 24, fillColor: Colors.white),
         ),
       );
     }

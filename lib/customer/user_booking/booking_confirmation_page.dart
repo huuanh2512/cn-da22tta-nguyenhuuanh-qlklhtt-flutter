@@ -8,6 +8,7 @@ import 'package:khu_lien_hop_tt/models/sport.dart';
 import 'package:khu_lien_hop_tt/services/auth_service.dart';
 import 'package:khu_lien_hop_tt/services/user_booking_service.dart';
 import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 class BookingConfirmationPage extends StatefulWidget {
   final Sport sport;
@@ -203,13 +204,9 @@ class _BookingConfirmationPageState extends State<BookingConfirmationPage>
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (_submitting)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
+                      const NeoLoadingDot(
+                        size: 18,
+                        fillColor: Colors.white,
                       )
                     else
                       const Icon(Icons.check_circle, color: Colors.white),

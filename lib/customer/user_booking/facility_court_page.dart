@@ -7,6 +7,7 @@ import 'package:khu_lien_hop_tt/models/sport.dart';
 import 'package:khu_lien_hop_tt/services/user_booking_service.dart';
 import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 import 'package:khu_lien_hop_tt/customer/user_booking/booking_scheduler_page.dart';
 
@@ -82,7 +83,12 @@ class _FacilityCourtSelectionPageState
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: NeoLoadingCard(
+          label: 'Đang tải cơ sở...',
+          width: 260,
+        ),
+      );
     }
     if (_error != null) {
       return Center(

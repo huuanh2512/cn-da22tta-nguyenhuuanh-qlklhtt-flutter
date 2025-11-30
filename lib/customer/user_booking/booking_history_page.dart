@@ -6,6 +6,7 @@ import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
 import 'package:khu_lien_hop_tt/services/api_service.dart';
 import 'package:khu_lien_hop_tt/services/auth_service.dart';
 import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 class BookingHistoryPage extends StatefulWidget {
   const BookingHistoryPage({super.key, this.embedded = false});
@@ -218,7 +219,12 @@ class _BookingHistoryPageState extends State<BookingHistoryPage> {
 
     Widget body;
     if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const Center(
+        child: NeoLoadingCard(
+          label: 'Đang tải lịch sử...',
+          width: 260,
+        ),
+      );
     } else if (_error != null) {
       body = Center(
         child: Padding(
@@ -488,14 +494,7 @@ class _BookingHistoryPageState extends State<BookingHistoryPage> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       if (isCancelling)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
+                        const NeoLoadingDot(size: 16, fillColor: Colors.white)
                       else
                         const Icon(Icons.cancel_schedule_send_outlined, size: 18, color: Colors.white),
                       const SizedBox(width: 6),

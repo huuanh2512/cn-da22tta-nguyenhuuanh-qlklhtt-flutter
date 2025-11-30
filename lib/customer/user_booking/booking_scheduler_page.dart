@@ -6,6 +6,7 @@ import 'package:khu_lien_hop_tt/models/facility.dart';
 import 'package:khu_lien_hop_tt/models/sport.dart';
 import 'package:khu_lien_hop_tt/services/user_booking_service.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 import 'package:khu_lien_hop_tt/customer/user_booking/booking_confirmation_page.dart';
 
@@ -243,7 +244,12 @@ class _BookingSchedulerPageState extends State<BookingSchedulerPage> {
           if (_checking)
             const Padding(
               padding: EdgeInsets.only(top: 16),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(
+                child: NeoLoadingCard(
+                  label: 'Đang kiểm tra sân...',
+                  width: 220,
+                ),
+              ),
             ),
           if (_available == false) ...[
             const SizedBox(height: 16),

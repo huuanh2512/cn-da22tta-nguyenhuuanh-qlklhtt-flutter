@@ -6,6 +6,7 @@ import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
 import 'package:khu_lien_hop_tt/models/user_payment.dart';
 import 'package:khu_lien_hop_tt/services/user_billing_service.dart';
 import 'package:khu_lien_hop_tt/widgets/success_dialog.dart';
+import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
 
 class UserInvoicesPage extends StatefulWidget {
   const UserInvoicesPage({super.key, this.embedded = false});
@@ -102,7 +103,12 @@ class _UserInvoicesPageState extends State<UserInvoicesPage> {
     final mediaPadding = MediaQuery.of(context).padding;
     final listBottomPadding = mediaPadding.bottom + 24;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: NeoLoadingCard(
+          label: 'Đang tải hoá đơn...',
+          width: 260,
+        ),
+      );
     }
     if (_error != null) {
       return Center(
@@ -509,13 +515,9 @@ class _UserInvoicesPageState extends State<UserInvoicesPage> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               if (isPaying)
-                                const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
+                                const NeoLoadingDot(
+                                  size: 18,
+                                  fillColor: Colors.white,
                                 )
                               else
                                 const Icon(Icons.payment, color: Colors.white),
