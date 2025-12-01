@@ -1859,6 +1859,85 @@ async function syncMatchRequestBooking(updatedBooking, { status }) {
     return;
   }
 
+
+async function cancelOverlappingMatchRequests(bookingDoc) {
+  if (!bookingDoc) return;
+  const courtId = coerceObjectId(bookingDoc.courtId);
+  const bookingStart = coerceDateValue(bookingDoc.start);
+  const bookingEnd = coerceDateValue(bookingDoc.end);
+  if (!courtId || !bookingStart || !bookingEnd) return;
+
+  const linkedMatchRequestId = coerceObjectId(bookingDoc.matchRequestId);
+  const conflictFilter = {
+    courtId,
+    status: 'open',
+    desiredStart: { $lt: bookingEnd },
+    desiredEnd: { $gt: bookingStart },
+  };
+  if (linkedMatchRequestId) conflictFilter._id = { $ne: linkedMatchRequestId };
+
+  const overlappingRequests = await db.collection('match_requests').find(conflictFilter).toArray();
+  if (!overlappingRequests.length) return;
+
+  const requestIds = overlappingRequests
+    .map((doc) => coerceObjectId(doc._id))
+    .filter((oid) => oid);
+  if (!requestIds.length) return;
+
+  const now = new Date();
+  const conflictBookingId = coerceObjectId(bookingDoc._id);
+  const updateFields = {
+    status: 'cancelled',
+    bookingStatus: 'cancelled',
+    cancelledReason: 'auto_conflict',
+    cancelledAt: now,
+    updatedAt: now,
+  };
+  if (conflictBookingId) updateFields.conflictBookingId = conflictBookingId;
+
+  await db.collection('match_requests').updateMany(
+    { _id: { $in: requestIds } },
+    { $set: updateFields },
+  );
+
+  const sport = await fetchSportById(bookingDoc.sportId);
+  const facility = await fetchFacilityById(bookingDoc.facilityId);
+  const court = await fetchCourtById(bookingDoc.courtId);
+
+  for (const request of overlappingRequests) {
+    const refreshed = await db.collection('match_requests').findOne({ _id: request._id }) || request;
+    const desiredStart = coerceDateValue(refreshed.desiredStart);
+    const desiredEnd = coerceDateValue(refreshed.desiredEnd);
+    const timeRange = desiredStart && desiredEnd
+      ? `${desiredStart.toLocaleString('vi-VN', { hour12: false })} - ${desiredEnd.toLocaleString('vi-VN', { hour12: false })}`
+      : null;
+
+    const segments = [];
+    if (sport?.name) segments.push(`Môn ${sport.name}`);
+    if (facility?.name) segments.push(`tại ${facility.name}`);
+    if (court?.name) segments.push(`sân ${court.name}`);
+    if (timeRange) segments.push(timeRange);
+    const baseMessage = segments.join(' | ') || 'Khung giờ đã được đặt bởi lịch khác.';
+
+    const dataPayload = {
+      matchRequestId: refreshed._id,
+      reason: 'court_conflict',
+    };
+    if (conflictBookingId) dataPayload.bookingId = conflictBookingId;
+
+    await notifyMatchParticipants(refreshed, {
+      title: 'Lời mời thi đấu bị huỷ do trùng lịch',
+      message: `${baseMessage}. Khung giờ này đã có đặt sân khác.`,
+      data: dataPayload,
+    });
+
+    await notifyStaffMatchRequest(refreshed, {
+      title: 'Lời mời thi đấu bị huỷ tự động',
+      message: `${baseMessage}. Hệ thống đã huỷ vì có đặt sân mới.`,
+      data: dataPayload,
+    });
+  }
+}
   await notifyMatchParticipants(refreshed, {
     title,
     message,
@@ -2166,6 +2245,12 @@ app.post('/api/bookings', async (req, res, next) => {
       } catch (invoiceError) {
         console.error('Failed to ensure invoice for confirmed booking', invoiceError);
       }
+    }
+
+    try {
+      await cancelOverlappingMatchRequests(createdBooking);
+    } catch (overlapError) {
+      console.error('Failed to cancel overlapping match requests', overlapError);
     }
 
     res.status(201).json(createdBooking);

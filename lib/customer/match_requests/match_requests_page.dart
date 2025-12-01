@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:neubrutalism_ui/neubrutalism_ui.dart';
 
@@ -26,6 +28,16 @@ class _TeamVariantOption {
     required this.label,
     required this.teamSizePerSide,
     this.totalParticipants,
+  });
+}
+
+class _AutoCancelProcessResult {
+  final List<MatchRequest> requests;
+  final Set<String> autoCancelledIds;
+
+  const _AutoCancelProcessResult({
+    required this.requests,
+    required this.autoCancelledIds,
   });
 }
 
@@ -147,7 +159,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   String? _selectedCourt;
   RangeValues _skillRange = const RangeValues(30, 70);
   DateTime? _desiredStart;
-  DateTime? _desiredEnd;
+  int _desiredDurationHours = 2;
   int _participantLimit = 2;
   int _teamSizePerSide = 1;
   bool _loading = true;
@@ -156,6 +168,8 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   ApiErrorDetails? _error;
   final Set<String> _joining = <String>{};
   final Set<String> _cancelling = <String>{};
+  final Set<String> _autoCancelledRequestIds = <String>{};
+  Timer? _autoCancelTicker;
   String? _filterSportId;
   bool _filterOnlyOpen = true;
   bool _filterOnlyMine = false;
@@ -167,12 +181,13 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     _desiredStart = _roundToNextHour(
       DateTime.now().add(const Duration(hours: 1)),
     );
-    _desiredEnd = _desiredStart?.add(const Duration(hours: 2));
     _load();
+    _startAutoCancelTicker();
   }
 
   @override
   void dispose() {
+    _autoCancelTicker?.cancel();
     _notesController.dispose();
     super.dispose();
   }
@@ -180,6 +195,78 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   DateTime _roundToNextHour(DateTime value) {
     final nextHour = value.add(Duration(hours: value.minute > 0 ? 1 : 0));
     return DateTime(nextHour.year, nextHour.month, nextHour.day, nextHour.hour);
+  }
+
+  DateTime? _computeEndForStart(DateTime? start, [int? overrideHours]) {
+    if (start == null) return null;
+    final hours = overrideHours ?? _desiredDurationHours;
+    return start.add(Duration(hours: hours));
+  }
+
+  void _startAutoCancelTicker() {
+    _autoCancelTicker?.cancel();
+    _autoCancelTicker = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      final result = _autoCancelExpiredRequests(_requests);
+      if (_shouldUpdateAutoCancelled(result.autoCancelledIds)) {
+        setState(() => _updateAutoCancelledTracking(result.autoCancelledIds));
+      }
+    });
+  }
+
+  bool _shouldUpdateAutoCancelled(Set<String> next) {
+    if (_autoCancelledRequestIds.length != next.length) return true;
+    for (final id in next) {
+      if (!_autoCancelledRequestIds.contains(id)) return true;
+    }
+    for (final id in _autoCancelledRequestIds) {
+      if (!next.contains(id)) return true;
+    }
+    return false;
+  }
+
+  _AutoCancelProcessResult _autoCancelExpiredRequests(
+    List<MatchRequest> requests,
+  ) {
+    final nowUtc = DateTime.now().toUtc();
+    final cancelledIds = <String>{};
+    for (final request in requests) {
+      if (_shouldAutoCancelRequest(request, nowUtc)) {
+        cancelledIds.add(request.id);
+      }
+    }
+    return _AutoCancelProcessResult(
+      requests: requests,
+      autoCancelledIds: cancelledIds,
+    );
+  }
+
+  bool _shouldAutoCancelRequest(MatchRequest request, DateTime nowUtc) {
+    if (request.status.toLowerCase() != 'open') return false;
+    final desiredStart = request.desiredStart;
+    if (desiredStart == null) return false;
+    final startUtc = desiredStart.toUtc();
+    if (nowUtc.isBefore(startUtc)) return false;
+    final required = _requiredParticipantsForRequest(request);
+    final current = request.participantCount;
+    return current < required;
+  }
+
+  int _requiredParticipantsForRequest(MatchRequest request) {
+    final teamSize = request.teamSize ?? 0;
+    if (teamSize > 0) {
+      final total = teamSize * 2;
+      return total < 2 ? 2 : total;
+    }
+    final limit = request.participantLimit ?? 0;
+    if (limit >= 2) return limit;
+    return 2;
+  }
+
+  void _updateAutoCancelledTracking(Set<String> ids) {
+    _autoCancelledRequestIds
+      ..clear()
+      ..addAll(ids);
   }
 
   Sport? _getSportById(String? id) {
@@ -397,6 +484,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       final sports = await sportsFuture;
       final facilities = await facilitiesFuture;
       final requests = await requestsFuture;
+      final processedRequests = _autoCancelExpiredRequests(requests);
       if (!mounted) return;
       final previousSport = _selectedSport;
       final nextSport =
@@ -448,10 +536,11 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
         _selectedFacility = nextFacility;
         _participantLimit = nextLimit;
         _teamSizePerSide = nextTeamSize;
-        _requests = requests;
+        _requests = processedRequests.requests;
         _loading = false;
         _filterSportId = nextFilterSport;
         _selectedVariantId = null;
+        _updateAutoCancelledTracking(processedRequests.autoCancelledIds);
       });
       if (!mounted) return;
       await _loadCourtsForFacility(nextFacility);
@@ -468,7 +557,11 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     try {
       final requests = await _api.getMatchRequests(limit: 50);
       if (!mounted) return;
-      setState(() => _requests = requests);
+      final processed = _autoCancelExpiredRequests(requests);
+      setState(() {
+        _requests = processed.requests;
+        _updateAutoCancelledTracking(processed.autoCancelledIds);
+      });
     } catch (e) {
       if (!mounted) return;
       await _showSnack(_friendlyError(e), isError: true);
@@ -486,11 +579,15 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     try {
       final updated = await _api.joinMatchRequest(request.id, team: team);
       if (!mounted) return;
+      final nextRequests = _requests
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList();
       setState(() {
         _joining.remove(joinKey);
-        _requests = _requests
-            .map((item) => item.id == updated.id ? updated : item)
-            .toList();
+        _requests = nextRequests;
+        _updateAutoCancelledTracking(
+          _autoCancelExpiredRequests(nextRequests).autoCancelledIds,
+        );
       });
       if (!mounted) return;
       await _showSnack('Đã tham gia lời mời.');
@@ -508,11 +605,15 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     try {
       final updated = await _api.cancelMatchRequest(request.id);
       if (!mounted) return;
+      final nextRequests = _requests
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList();
       setState(() {
         _cancelling.remove(request.id);
-        _requests = _requests
-            .map((item) => item.id == updated.id ? updated : item)
-            .toList();
+        _requests = nextRequests;
+        _updateAutoCancelledTracking(
+          _autoCancelExpiredRequests(nextRequests).autoCancelledIds,
+        );
       });
       if (!mounted) return;
       await _showSnack('Đã hủy lời mời thi đấu.');
@@ -546,20 +647,6 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
         startTime.hour,
         startTime.minute,
       );
-
-      final tentativeEnd = _desiredEnd ?? base.add(const Duration(hours: 2));
-      final endTime = TimeOfDay.fromDateTime(tentativeEnd);
-      var nextEnd = DateTime(
-        pickedDate.year,
-        pickedDate.month,
-        pickedDate.day,
-        endTime.hour,
-        endTime.minute,
-      );
-      if (!nextEnd.isAfter(_desiredStart!)) {
-        nextEnd = _desiredStart!.add(const Duration(hours: 2));
-      }
-      _desiredEnd = nextEnd;
     });
   }
 
@@ -579,42 +666,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       pickedTime.hour,
       pickedTime.minute,
     );
-    setState(() {
-      _desiredStart = result;
-      if (_desiredEnd == null || !_desiredEnd!.isAfter(result)) {
-        _desiredEnd = result.add(const Duration(hours: 2));
-      }
-    });
-  }
-
-  Future<void> _pickDesiredEnd() async {
-    final now = DateTime.now();
-    final fallbackStart = _desiredStart ?? _roundToNextHour(now);
-    final base = (_desiredEnd != null && _desiredEnd!.isAfter(fallbackStart))
-        ? _desiredEnd!
-        : fallbackStart.add(const Duration(hours: 2));
-    final pickedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(base),
-    );
-    if (pickedTime == null) return;
-    if (!mounted) return;
-    final result = DateTime(
-      base.year,
-      base.month,
-      base.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    );
-    if (!result.isAfter(fallbackStart)) {
-      if (!mounted) return;
-      await _showSnack(
-        'Thời gian kết thúc phải sau thời gian bắt đầu.',
-        isError: true,
-      );
-      return;
-    }
-    setState(() => _desiredEnd = result);
+    setState(() => _desiredStart = result);
   }
 
   String _formatDateTime(DateTime? value) {
@@ -645,6 +697,71 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     return '$hh:$mm';
   }
 
+  void _selectDuration(int hours) {
+    var normalized = hours;
+    if (normalized < 1) normalized = 1;
+    if (normalized > 3) normalized = 3;
+    if (normalized == _desiredDurationHours) return;
+    setState(() => _desiredDurationHours = normalized);
+  }
+
+  String _buildDesiredRangeSummary() {
+    final start = _desiredStart;
+    final end = _computeEndForStart(start);
+    if (start == null || end == null) {
+      return 'Chưa chọn thời gian cụ thể';
+    }
+    final localStart = start.toLocal();
+    final localEnd = end.toLocal();
+    final durationLabel = '$_desiredDurationHours giờ';
+    return '${_formatDayMonth(localStart)} • ${_formatTimeOnly(localStart)} - ${_formatTimeOnly(localEnd)} ($durationLabel)';
+  }
+
+  String _formatDayMonth(DateTime value) {
+    const weekdayNames = <int, String>{
+      DateTime.monday: 'Thứ hai',
+      DateTime.tuesday: 'Thứ ba',
+      DateTime.wednesday: 'Thứ tư',
+      DateTime.thursday: 'Thứ năm',
+      DateTime.friday: 'Thứ sáu',
+      DateTime.saturday: 'Thứ bảy',
+      DateTime.sunday: 'Chủ nhật',
+    };
+    final weekday = weekdayNames[value.weekday] ?? 'Ngày';
+    final d = value.day.toString().padLeft(2, '0');
+    final m = value.month.toString().padLeft(2, '0');
+    return '$weekday, $d/$m';
+  }
+
+  String _formatDurationLabel(Duration duration) {
+    if (duration.inMinutes <= 0) return '';
+    final hours = duration.inMinutes ~/ 60;
+    final minutes = duration.inMinutes % 60;
+    if (minutes == 0) {
+      return '$hours giờ';
+    }
+    if (hours == 0) {
+      return '$minutes phút';
+    }
+    return '$hours giờ $minutes phút';
+  }
+
+  String _formatRangeForCard(MatchRequest request) {
+    final start = request.desiredStart;
+    final end = request.desiredEnd;
+    if (start == null) return 'Chưa rõ thời gian thi đấu';
+    final localStart = start.toLocal();
+    final buffer = StringBuffer()
+      ..write('${_formatDayMonth(localStart)} • ${_formatTimeOnly(localStart)}');
+    if (end != null && end.isAfter(start)) {
+      final localEnd = end.toLocal();
+      buffer
+        ..write(' - ${_formatTimeOnly(localEnd)}')
+        ..write(' (${_formatDurationLabel(localEnd.difference(localStart))})');
+    }
+    return buffer.toString();
+  }
+
   Future<void> _submitRequest() async {
     if (_submitting) return;
     final sportId = _selectedSport;
@@ -663,7 +780,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       return;
     }
     final start = _desiredStart;
-    final end = _desiredEnd;
+    final end = _computeEndForStart(start);
     if (start == null || end == null || !start.isBefore(end)) {
       await _showSnack('Vui lòng chọn thời gian hợp lệ.', isError: true);
       return;
@@ -703,10 +820,14 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
             : _notesController.text.trim(),
       );
       if (!mounted) return;
+      final nextRequests = [request, ..._requests];
       setState(() {
         _submitting = false;
         _notesController.clear();
-        _requests = [request, ..._requests];
+        _requests = nextRequests;
+        _updateAutoCancelledTracking(
+          _autoCancelExpiredRequests(nextRequests).autoCancelledIds,
+        );
       });
       if (!mounted) return;
       await _showSnack('Đã tạo lời mời thi đấu.');
@@ -876,7 +997,8 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       }
       if (_filterOnlyOpen) {
         final statusLower = request.status.toLowerCase();
-        final isOpen = statusLower == 'open';
+        final isOpen =
+            statusLower == 'open' && !_autoCancelledRequestIds.contains(request.id);
         final hasSpace = request.participantLimit == null ||
             request.participantCount < request.participantLimit!;
         if (!(isOpen && hasSpace)) return false;
@@ -2137,46 +2259,32 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
 
   Widget _buildDesiredTimeButton() {
     final theme = Theme.of(context);
-    final hasStart = _desiredStart != null;
-    final hasEnd = _desiredEnd != null;
-    final dateText = _formatDateOnly(_desiredStart);
-    final startText = hasStart
-        ? _formatTimeOnly(_desiredStart)
-        : 'Chưa chọn';
-    final endText = hasEnd
-        ? _formatTimeOnly(_desiredEnd)
-        : 'Chưa chọn';
+    final start = _desiredStart;
+    final dateText = _formatDateOnly(start);
+    final startText = start != null ? _formatTimeOnly(start) : 'Chưa chọn';
+    final summary = _buildDesiredRangeSummary();
 
-    Widget buildCard({
+    Widget buildPickerCard({
       required String title,
       required String value,
       required IconData icon,
-      required VoidCallback? onTap,
-      bool enabled = true,
+      required VoidCallback onTap,
     }) {
-      final bgColor = enabled
-          ? const Color(0xFFFFFFFF)
-          : const Color(0xFFF5F5F5);
-      final textColor = enabled
-          ? Colors.black
-          : Colors.black45;
       return GestureDetector(
-        onTap: enabled ? onTap : null,
+        onTap: onTap,
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: bgColor,
+            color: Colors.white,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: Colors.black, width: 3),
-            boxShadow: enabled
-                ? const [
-                    BoxShadow(
-                      color: Colors.black,
-                      offset: Offset(4, 4),
-                      blurRadius: 0,
-                    ),
-                  ]
-                : null,
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black,
+                offset: Offset(4, 4),
+                blurRadius: 0,
+              ),
+            ],
           ),
           child: Row(
             children: [
@@ -2184,17 +2292,11 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: enabled
-                      ? const Color(0xFFE8F5E9)
-                      : const Color(0xFFF5F5F5),
+                  color: const Color(0xFFE8F5E9),
                   border: Border.all(color: Colors.black, width: 2),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(
-                  icon,
-                  color: enabled ? Colors.black : Colors.black45,
-                  size: 22,
-                ),
+                child: Icon(icon, color: Colors.black87, size: 22),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -2206,19 +2308,48 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                     Text(
                       value,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: textColor,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
               ),
-              Icon(
-                Icons.chevron_right,
-                color: enabled
-                    ? theme.colorScheme.outline
-                    : theme.disabledColor,
-              ),
+              const Icon(Icons.chevron_right, color: Colors.black54),
             ],
+          ),
+        ),
+      );
+    }
+
+    Widget buildDurationChip(int hours) {
+      final selected = _desiredDurationHours == hours;
+      final label = '$hours giờ';
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => _selectDuration(hours),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF1E88E5) : const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.black, width: 3),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black,
+                  offset: Offset(3, 3),
+                  blurRadius: 0,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : Colors.black,
+                ),
+              ),
+            ),
           ),
         ),
       );
@@ -2227,43 +2358,83 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        buildCard(
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.black, width: 3),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black,
+                offset: Offset(4, 4),
+                blurRadius: 0,
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.black, width: 2),
+                ),
+                child: const Icon(Icons.schedule_outlined, color: Colors.black87),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Khung giờ dự kiến',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      summary,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        buildPickerCard(
           title: 'Ngày thi đấu',
           value: dateText,
           icon: Icons.calendar_month_outlined,
           onTap: _pickDesiredDate,
         ),
         const SizedBox(height: 12),
+        buildPickerCard(
+          title: 'Giờ bắt đầu',
+          value: startText,
+          icon: Icons.schedule,
+          onTap: _pickDesiredStart,
+        ),
+        const SizedBox(height: 12),
+        Text('Thời lượng trận đấu', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 6),
         Row(
           children: [
-            Expanded(
-              child: buildCard(
-                title: 'Giờ bắt đầu',
-                value: startText,
-                icon: Icons.play_arrow_outlined,
-                onTap: _pickDesiredStart,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: buildCard(
-                title: 'Giờ kết thúc',
-                value: endText,
-                icon: Icons.flag_outlined,
-                onTap: hasStart ? _pickDesiredEnd : null,
-                enabled: hasStart,
-              ),
-            ),
+            buildDurationChip(1),
+            const SizedBox(width: 10),
+            buildDurationChip(2),
+            const SizedBox(width: 10),
+            buildDurationChip(3),
           ],
         ),
-        if (!hasStart)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              'Chọn ngày và giờ bắt đầu trước khi điều chỉnh giờ kết thúc.',
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
       ],
     );
   }
@@ -2441,8 +2612,9 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     final theme = Theme.of(context);
     final isOwn = request.isCreator;
     final statusLower = request.status.toLowerCase();
-    final isOpen = statusLower == 'open';
-    final isCancelled = statusLower == 'cancelled';
+    final autoCancelled = _autoCancelledRequestIds.contains(request.id);
+    final isCancelled = autoCancelled || statusLower == 'cancelled';
+    final isOpen = statusLower == 'open' && !autoCancelled;
     final sportLabel = (request.sportName?.trim().isNotEmpty ?? false)
       ? request.sportName!.trim()
       : 'Môn thể thao (chưa xác định)';
@@ -2480,6 +2652,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     final bool teamBFull = teamLimit != null && teamBCount >= teamLimit;
     final String? myTeam = request.myTeam;
     final actions = <Widget>[];
+    final timeRangeText = _formatRangeForCard(request);
 
     if (isOwn) {
       actions.add(
@@ -2560,8 +2733,17 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     } else if (isCancelled) {
       actions.add(
         Chip(
-          avatar: const Icon(Icons.cancel_outlined, size: 18),
-          label: const Text('Lời mời đã hủy'),
+          avatar: Icon(
+            autoCancelled
+                ? Icons.schedule_send_outlined
+                : Icons.cancel_outlined,
+            size: 18,
+          ),
+          label: Text(
+            autoCancelled
+                ? 'Tự hủy do thiếu người'
+                : 'Lời mời đã hủy',
+          ),
         ),
       );
     } else if (!isOpen) {
@@ -2611,8 +2793,8 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       );
     }
     final participantText = request.participantLimit != null
-        ? '${request.participantCount}/${request.participantLimit} người'
-        : '${request.participantCount} người';
+      ? '${request.participantCount}/${request.participantLimit} người'
+      : '${request.participantCount} người';
     final facilityParts = <String>[
       'Cơ sở: $facilityLabel',
       'Sân: $courtLabel',
@@ -2675,6 +2857,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                   isOpen: isOpen,
                   isCancelled: isCancelled,
                   matchFull: matchFull,
+                  autoCancelled: autoCancelled,
                 ),
               ],
             ),
@@ -2692,7 +2875,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Từ ${_formatDateTime(request.desiredStart)} đến ${_formatDateTime(request.desiredEnd)}',
+                      timeRangeText,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -2701,6 +2884,17 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                 ],
               ),
             ),
+            if (autoCancelled)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Lời mời đã tự hủy do không đủ người khi đến giờ bắt đầu.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFFB71C1C),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             if (hasBookingWindow)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
@@ -2847,13 +3041,19 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     required bool isOpen,
     required bool isCancelled,
     required bool matchFull,
+    required bool autoCancelled,
   }) {
     late final String label;
     late final Color bg;
     late final Color borderColor;
     late final IconData icon;
 
-    if (isCancelled) {
+    if (autoCancelled) {
+      label = 'Tự hủy (thiếu người)';
+      bg = const Color(0xFFFFF3E0);
+      borderColor = const Color(0xFFFB8C00);
+      icon = Icons.schedule_send_outlined;
+    } else if (isCancelled) {
       label = 'Đã hủy';
       bg = const Color(0xFFFFE5E5);
       borderColor = const Color(0xFFDC3545);

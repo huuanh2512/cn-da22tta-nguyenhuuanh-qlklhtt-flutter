@@ -251,12 +251,29 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     List<MatchRequest> requests,
   ) {
     if (requests.isEmpty) return const [];
-    final sorted = [...requests]..sort((a, b) {
-        final aDate = a.createdAt ?? a.desiredStart ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bDate = b.createdAt ?? b.desiredStart ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return bDate.compareTo(aDate);
-      });
-    return sorted.take(3).toList(growable: false);
+    final now = DateTime.now().toLocal();
+    final filtered = requests.where((request) {
+      final status = request.status.toLowerCase();
+      const excludedStatuses = {
+        'cancelled',
+        'canceled',
+        'expired',
+        'closed',
+        'ended',
+        'completed',
+      };
+      if (excludedStatuses.contains(status)) return false;
+      final start = (request.desiredStart ?? request.bookingStart);
+      if (start == null) return false;
+      return !start.toLocal().isBefore(now);
+    }).toList();
+    if (filtered.isEmpty) return const [];
+    filtered.sort((a, b) {
+      final aDate = a.createdAt ?? a.desiredStart ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate = b.createdAt ?? b.desiredStart ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bDate.compareTo(aDate);
+    });
+    return filtered.take(3).toList(growable: false);
   }
 
   Future<List<_UserNotification>> _fetchUserNotifications({int limit = 3}) async {
