@@ -300,6 +300,8 @@ class ApiService {
     int? participantLimit,
     int? teamSize,
     String? notes,
+    String? mode,
+    String? teamName,
   }) async {
     final skillRange = <String, int>{
       if (skillMin != null) 'min': skillMin,
@@ -312,9 +314,13 @@ class ApiService {
       if (skillRange.isNotEmpty) 'skillRange': skillRange,
       if (facilityId != null && facilityId.isNotEmpty) 'facilityId': facilityId,
       if (courtId != null && courtId.isNotEmpty) 'courtId': courtId,
+      if (mode != null && mode.trim().isNotEmpty)
+        'mode': mode.trim().toLowerCase(),
       if (participantLimit != null && participantLimit > 0)
         'participantLimit': participantLimit,
       if (teamSize != null && teamSize > 0) 'teamSize': teamSize,
+      if (teamName != null && teamName.trim().isNotEmpty)
+        'teamName': teamName.trim(),
       if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
     };
 
@@ -355,9 +361,16 @@ class ApiService {
         .toList();
   }
 
-  Future<MatchRequest> joinMatchRequest(String id, {String? team}) async {
+  Future<MatchRequest> joinMatchRequest(
+    String id, {
+    String? team,
+    String? mode,
+    String? teamName,
+  }) async {
     final payload = <String, dynamic>{
       if (team != null && team.trim().isNotEmpty) 'team': team.trim(),
+      if (mode != null && mode.trim().isNotEmpty) 'mode': mode.trim().toLowerCase(),
+      if (teamName != null && teamName.trim().isNotEmpty) 'teamName': teamName.trim(),
     };
 
     final res = await _put(

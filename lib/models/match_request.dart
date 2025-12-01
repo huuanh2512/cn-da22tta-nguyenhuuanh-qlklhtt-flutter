@@ -1,5 +1,38 @@
 import '../utils/json_utils.dart';
 
+class TeamInfo {
+  final String? captainUserId;
+  final String? teamName;
+
+  const TeamInfo({
+    this.captainUserId,
+    this.teamName,
+  });
+
+  bool get isEmpty => (captainUserId == null || captainUserId!.isEmpty)
+      && (teamName == null || teamName!.trim().isEmpty);
+
+  factory TeamInfo.fromJson(dynamic json) {
+    if (json is Map<String, dynamic>) {
+      final captain = JsonUtils.parseId(json['captainUserId'] ?? json['captain']);
+      final rawName = json['teamName'] ?? json['name'];
+      final teamName = rawName is String ? rawName.trim() : null;
+      return TeamInfo(
+        captainUserId: captain.isEmpty ? null : captain,
+        teamName: teamName?.isEmpty ?? true ? null : teamName,
+      );
+    }
+    return const TeamInfo();
+  }
+
+  Map<String, dynamic> toJson() => {
+        if (captainUserId != null && captainUserId!.isNotEmpty)
+          'captainUserId': captainUserId,
+        if (teamName != null && teamName!.trim().isNotEmpty)
+          'teamName': teamName!.trim(),
+      };
+}
+
 class MatchRequest {
   final String id;
   final String sportId;
@@ -12,6 +45,7 @@ class MatchRequest {
   final DateTime? desiredEnd;
   final int? skillMin;
   final int? skillMax;
+  final String mode;
   final String status;
   final String visibility;
   final String? creatorId;
@@ -23,6 +57,8 @@ class MatchRequest {
   final bool hasJoined;
   final List<String> teamA;
   final List<String> teamB;
+  final TeamInfo? hostTeam;
+  final TeamInfo? guestTeam;
   final String? myTeam;
   final int? teamLimit;
   final String? notes;
@@ -46,6 +82,7 @@ class MatchRequest {
     this.desiredEnd,
     this.skillMin,
     this.skillMax,
+    this.mode = 'solo',
     required this.status,
     required this.visibility,
     this.creatorId,
@@ -57,6 +94,8 @@ class MatchRequest {
     this.hasJoined = false,
     this.teamA = const <String>[],
     this.teamB = const <String>[],
+    this.hostTeam,
+    this.guestTeam,
     this.myTeam,
     this.teamLimit,
     this.notes,
@@ -122,6 +161,8 @@ class MatchRequest {
     }
 
     final status = (json['status'] ?? 'open').toString();
+    final rawMode = (json['mode'] ?? 'solo').toString().trim().toLowerCase();
+    final normalizedMode = rawMode.isEmpty ? 'solo' : rawMode;
     final visibility = (json['visibility'] ?? 'public').toString();
 
     int? parseCount(dynamic value) {
@@ -160,6 +201,17 @@ class MatchRequest {
 
     final participantSet = <String>{...participants, ...teamA, ...teamB};
     final participantList = participantSet.toList(growable: false);
+
+    TeamInfo? parseTeamInfo(dynamic raw) {
+      if (raw is Map<String, dynamic>) {
+        final team = TeamInfo.fromJson(raw);
+        return team.isEmpty ? null : team;
+      }
+      return null;
+    }
+
+    final hostTeam = parseTeamInfo(json['hostTeam']);
+    final guestTeam = parseTeamInfo(json['guestTeam']);
 
     String? normalizeTeam(dynamic rawTeam) {
       if (rawTeam is String) {
@@ -206,6 +258,7 @@ class MatchRequest {
             ? skillRange['max']
             : json['skillMax'],
       ),
+      mode: normalizedMode,
       status: status,
       visibility: visibility,
       creatorId: JsonUtils.parseId(json['creatorId']),
@@ -217,6 +270,8 @@ class MatchRequest {
       hasJoined: json['hasJoined'] == true || (myTeam != null),
       teamA: teamA,
       teamB: teamB,
+      hostTeam: hostTeam,
+      guestTeam: guestTeam,
       myTeam: myTeam,
       teamLimit: parseCount(json['teamLimit']),
       notes: json['notes']?.toString(),
@@ -229,4 +284,45 @@ class MatchRequest {
       updatedAt: parseDate(json['updatedAt']),
     );
   }
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'sportId': sportId,
+        if (sportName != null) 'sportName': sportName,
+        if (facilityId != null) 'facilityId': facilityId,
+        if (facilityName != null) 'facilityName': facilityName,
+        if (courtId != null) 'courtId': courtId,
+        if (courtName != null) 'courtName': courtName,
+        if (desiredStart != null)
+          'desiredStart': desiredStart!.toIso8601String(),
+        if (desiredEnd != null) 'desiredEnd': desiredEnd!.toIso8601String(),
+        if (skillMin != null || skillMax != null)
+          'skillRange': {
+            if (skillMin != null) 'min': skillMin,
+            if (skillMax != null) 'max': skillMax,
+          },
+        'status': status,
+        'visibility': visibility,
+        if (mode.isNotEmpty) 'mode': mode,
+        if (creatorId != null) 'creatorId': creatorId,
+        'participants': participants,
+        'participantCount': participantCount,
+        if (participantLimit != null) 'participantLimit': participantLimit,
+        if (teamSize != null) 'teamSize': teamSize,
+        'teamA': teamA,
+        'teamB': teamB,
+        if (hostTeam != null && !hostTeam!.isEmpty)
+          'hostTeam': hostTeam!.toJson(),
+        if (guestTeam != null && !guestTeam!.isEmpty)
+          'guestTeam': guestTeam!.toJson(),
+        if (myTeam != null) 'myTeam': myTeam,
+        if (teamLimit != null) 'teamLimit': teamLimit,
+        if (notes != null) 'notes': notes,
+        if (bookingId != null) 'bookingId': bookingId,
+        if (bookingStatus != null) 'bookingStatus': bookingStatus,
+        if (bookingStart != null) 'bookingStart': bookingStart!.toIso8601String(),
+        if (bookingEnd != null) 'bookingEnd': bookingEnd!.toIso8601String(),
+        if (cancelledAt != null) 'cancelledAt': cancelledAt!.toIso8601String(),
+        if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+        if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
+      };
 }

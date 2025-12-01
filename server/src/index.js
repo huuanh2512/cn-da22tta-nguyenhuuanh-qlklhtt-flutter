@@ -559,6 +559,7 @@ async function fetchStaffUser(req, { refresh = false } = {}) {
 function shapeMatchRequest(doc, { currentUserId } = {}) {
   if (!doc || typeof doc !== 'object') return null;
   const currentId = coerceObjectId(currentUserId);
+  const normalizedMode = normalizeMatchRequestMode(doc.mode);
   const toHex = (value) => {
     if (value instanceof ObjectId) return value.toHexString();
     if (typeof value === 'string') {
@@ -583,6 +584,23 @@ function shapeMatchRequest(doc, { currentUserId } = {}) {
     teamB: teamArray(doc.teams?.teamB),
   };
 
+  const buildTeamInfo = (teamDoc, fallbackCaptain) => {
+    const captainId = toHex(teamDoc?.captainUserId ?? fallbackCaptain);
+    const teamNameValue = typeof teamDoc?.teamName === 'string' ? normalizeTeamNameInput(teamDoc.teamName) : null;
+    const info = cleanObject({
+      captainUserId: captainId,
+      teamName: teamNameValue,
+    });
+    return info ?? null;
+  };
+
+  const hostTeam = normalizedMode === 'team'
+    ? (buildTeamInfo(doc.hostTeam, doc.creatorId) ?? buildTeamInfo({ captainUserId: doc.creatorId }, null))
+    : null;
+  const guestTeam = normalizedMode === 'team'
+    ? buildTeamInfo(doc.guestTeam, null)
+    : null;
+
   const creatorId = coerceObjectId(doc.creatorId);
   let joinedTeam = null;
   const currentHex = currentId ? currentId.toHexString() : null;
@@ -603,6 +621,7 @@ function shapeMatchRequest(doc, { currentUserId } = {}) {
     sport: sanitizeAuditData(doc.sport) ?? null,
     desiredStart: doc.desiredStart ?? doc.start ?? null,
     desiredEnd: doc.desiredEnd ?? doc.end ?? null,
+    mode: normalizedMode,
     status: typeof doc.status === 'string' ? doc.status : 'open',
     bookingStatus: typeof doc.bookingStatus === 'string' ? doc.bookingStatus : undefined,
     visibility: typeof doc.visibility === 'string' ? doc.visibility : 'public',
@@ -614,6 +633,8 @@ function shapeMatchRequest(doc, { currentUserId } = {}) {
     participants,
     participantCount: participants.length,
     teams,
+    hostTeam,
+    guestTeam,
     joinedTeam,
     isCreator: creatorId && currentId ? creatorId.equals(currentId) : false,
     createdAt: doc.createdAt ?? null,
@@ -659,6 +680,7 @@ const TEAM_ALIAS_MAP = new Map([
 ]);
 
 const TEAM_AUTO_VALUES = new Set(['auto', 'balanced', 'balance', 'even', 'either']);
+const MATCH_REQUEST_ALLOWED_MODES = new Set(['solo','team']);
 
 function normalizeTeamChoice(input) {
   if (input === undefined) return { provided: false };
@@ -672,6 +694,21 @@ function normalizeTeamChoice(input) {
   if (lower === 'teamb' || lower === 'team b' || lower === 'team_b' || lower === 'team-b') return { provided: true, value: 'teamB' };
   if (trimmed === 'teamA' || trimmed === 'teamB') return { provided: true, value: trimmed };
   return { provided: true, error: 'invalid_team' };
+}
+
+function normalizeTeamNameInput(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed.length) return null;
+  return trimmed.substring(0, 120);
+}
+
+function normalizeMatchRequestMode(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (MATCH_REQUEST_ALLOWED_MODES.has(trimmed)) return trimmed;
+  }
+  return 'solo';
 }
 
 function resolveTeamCapacity(source) {
@@ -2978,8 +3015,17 @@ app.post('/api/match_requests', authMiddleware, requireVerifiedCustomer, async (
       return res.status(409).json({ error: 'Khung giờ này đã có lịch, vui lòng chọn thời gian khác' });
     }
 
+    const matchMode = normalizeMatchRequestMode(body.mode);
+    const hostTeamName = normalizeTeamNameInput(body.teamName ?? body.hostTeam?.teamName);
+
     const teamSizeValue = coerceNumber(body.teamSize ?? sport.teamSize);
     const normalizedTeamSize = teamSizeValue ? Math.max(1, Math.min(20, Math.round(teamSizeValue))) : null;
+
+    if (matchMode === 'team') {
+      if (!normalizedTeamSize || normalizedTeamSize < 2) {
+        return res.status(400).json({ error: 'team_size_required', message: 'Vui lòng nhập số người mỗi đội (tối thiểu 2).' });
+      }
+    }
 
     let participantLimitValue = null;
     const rawLimit = body.participantLimit ?? body.playerCount ?? body.maxPlayers;
@@ -3013,9 +3059,21 @@ app.post('/api/match_requests', authMiddleware, requireVerifiedCustomer, async (
         teamA: [userId],
         teamB: [],
       },
+      mode: matchMode,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+
+    if (matchMode === 'team') {
+      doc.hostTeam = {
+        captainUserId: userId,
+      };
+      if (hostTeamName) doc.hostTeam.teamName = hostTeamName;
+      doc.guestTeam = {
+        captainUserId: null,
+        teamName: null,
+      };
+    }
 
     if (skillRangeDoc) doc.skillRange = skillRangeDoc;
     if (normalizedTeamSize) doc.teamSize = new Int32(normalizedTeamSize);
@@ -3032,6 +3090,26 @@ app.post('/api/match_requests', authMiddleware, requireVerifiedCustomer, async (
       resourceId: insert.insertedId,
       changes: sanitizeAuditData(doc),
     });
+
+    if (matchMode === 'team') {
+      try {
+        const startLabel = start.toLocaleString('vi-VN', { hour12: false });
+        const endLabel = end.toLocaleString('vi-VN', { hour12: false });
+        const segments = [];
+        if (sport?.name) segments.push(`Môn ${sport.name}`);
+        if (facility?.name) segments.push(`tại ${facility.name}`);
+        if (court?.name) segments.push(`sân ${court.name}`);
+        segments.push(`${startLabel} - ${endLabel}`);
+        const message = segments.join(' | ');
+        await notifyMatchParticipants({ ...doc, _id: insert.insertedId }, {
+          title: 'Đã tạo lời mời ghép đội',
+          message: message || 'Bạn đã tạo lời mời thi đấu đội - đội.',
+          data: { matchRequestId: insert.insertedId, mode: 'team' },
+        });
+      } catch (notificationError) {
+        console.error('Failed to notify host team about new match request', notificationError);
+      }
+    }
 
     const [shaped] = await fetchMatchRequests({
       filter: { _id: insert.insertedId },
@@ -3087,6 +3165,117 @@ app.put('/api/match_requests/:id/join', authMiddleware, requireVerifiedCustomer,
     if (!requestDoc) return res.status(404).json({ error: 'Lời mời không tồn tại' });
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const matchMode = normalizeMatchRequestMode(requestDoc.mode);
+
+    if (matchMode === 'team') {
+      const hostCaptainId = coerceObjectId(requestDoc.hostTeam?.captainUserId ?? requestDoc.creatorId);
+      if (hostCaptainId && hostCaptainId.equals(userId)) {
+        return res.status(400).json({ error: 'Bạn không thể tham gia với vai trò đội đối thủ cho lời mời này.' });
+      }
+
+      const guestCaptainId = coerceObjectId(requestDoc.guestTeam?.captainUserId);
+      if (guestCaptainId && guestCaptainId.equals(userId)) {
+        const [existingTeamRequest] = await fetchMatchRequests({
+          filter: { _id: requestDoc._id },
+          limit: 1,
+          currentUserId: userId,
+        });
+        return res.json(existingTeamRequest ?? sanitizeAuditData(requestDoc));
+      }
+      if (guestCaptainId) {
+        return res.status(409).json({ error: 'Lời mời này đã có đội đối thủ tham gia' });
+      }
+
+      const currentStatus = typeof requestDoc.status === 'string' ? requestDoc.status.trim().toLowerCase() : 'open';
+      if (currentStatus !== 'open') {
+        return res.status(400).json({ error: 'Lời mời này không còn mở' });
+      }
+
+      const guestTeamName = normalizeTeamNameInput(body.teamName ?? body.guestTeam?.teamName);
+
+      const overlappingCaptain = await db.collection('match_requests').findOne({
+        _id: { $ne: requestDoc._id },
+        mode: 'team',
+        status: { $in: ['open', 'matched'] },
+        $or: [
+          { 'hostTeam.captainUserId': userId },
+          { 'guestTeam.captainUserId': userId },
+        ],
+        desiredStart: { $lt: requestDoc.desiredEnd },
+        desiredEnd: { $gt: requestDoc.desiredStart },
+      });
+      if (overlappingCaptain) {
+        return res.status(409).json({ error: 'Bạn đang là đội trưởng của một lời mời khác trong khung giờ này' });
+      }
+
+      const now = new Date();
+      const setPayload = {
+        'guestTeam.captainUserId': userId,
+        'guestTeam.teamName': guestTeamName ?? null,
+        status: 'matched',
+        updatedAt: now,
+      };
+
+      const updateResult = await db.collection('match_requests').findOneAndUpdate(
+        {
+          _id: requestDoc._id,
+          $or: [
+            { 'guestTeam.captainUserId': null },
+            { 'guestTeam.captainUserId': { $exists: false } },
+          ],
+        },
+        {
+          $set: setPayload,
+          $addToSet: { participants: userId, 'teams.teamB': userId },
+        },
+        { returnDocument: 'after' },
+      );
+
+      const updatedDoc = updateResult?.value ?? await db.collection('match_requests').findOne({ _id: requestDoc._id });
+      if (!updatedDoc) {
+        return res.status(404).json({ error: 'Lời mời không tồn tại' });
+      }
+
+      await recordAudit(req, {
+        actorId: userId,
+        action: 'match_request.join',
+        resource: 'match_request',
+        resourceId: requestDoc._id,
+        changes: { guestCaptainId: userId, mode: 'team' },
+      });
+
+      try {
+        const [sportDoc, facilityDoc, courtDoc] = await Promise.all([
+          fetchSportById(updatedDoc.sportId ?? requestDoc.sportId),
+          fetchFacilityById(updatedDoc.facilityId ?? requestDoc.facilityId),
+          fetchCourtById(updatedDoc.courtId ?? requestDoc.courtId),
+        ]);
+        const startLabel = coerceDateValue(updatedDoc.desiredStart)?.toLocaleString('vi-VN', { hour12: false }) ?? '';
+        const endLabel = coerceDateValue(updatedDoc.desiredEnd)?.toLocaleString('vi-VN', { hour12: false }) ?? '';
+        const parts = [];
+        if (sportDoc?.name) parts.push(`Môn ${sportDoc.name}`);
+        if (facilityDoc?.name) parts.push(`tại ${facilityDoc.name}`);
+        if (courtDoc?.name) parts.push(`sân ${courtDoc.name}`);
+        if (startLabel && endLabel) parts.push(`${startLabel} - ${endLabel}`);
+        const message = parts.join(' | ');
+        await notifyMatchParticipants(updatedDoc, {
+          title: 'Đã có đội đối thủ tham gia',
+          message: message || 'Đội đối thủ đã nhận lời ghép trận của bạn.',
+          data: { matchRequestId: updatedDoc._id, mode: 'team' },
+        });
+      } catch (notificationError) {
+        console.error('Failed to notify teams about guest join', notificationError);
+      }
+
+      const [teamModeResponse] = await fetchMatchRequests({
+        filter: { _id: requestDoc._id },
+        limit: 1,
+        currentUserId: userId,
+      });
+
+      return res.json(teamModeResponse ?? sanitizeAuditData(updatedDoc));
+    }
+
     const teamChoice = normalizeTeamChoice(body.team ?? body.teamCode ?? body.teamId);
     if (teamChoice.error) {
       return res.status(400).json({ error: 'Lựa chọn đội không hợp lệ' });

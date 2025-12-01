@@ -162,6 +162,8 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   int _desiredDurationHours = 2;
   int _participantLimit = 2;
   int _teamSizePerSide = 1;
+  String _matchMode = 'solo';
+  final TextEditingController _teamNameController = TextEditingController();
   bool _loading = true;
   bool _submitting = false;
   bool _loadingCourts = false;
@@ -174,6 +176,8 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   bool _filterOnlyOpen = true;
   bool _filterOnlyMine = false;
   String? _selectedVariantId;
+
+  bool get _isTeamMode => _matchMode == 'team';
 
   @override
   void initState() {
@@ -189,6 +193,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   void dispose() {
     _autoCancelTicker?.cancel();
     _notesController.dispose();
+    _teamNameController.dispose();
     super.dispose();
   }
 
@@ -320,6 +325,42 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     final maxSize = _maxTeamSizeForSport(_selectedSport);
     final capped = maxSize < 1 ? 1 : maxSize;
     return List<int>.generate(capped, (index) => index + 1);
+  }
+
+  List<int> _teamModeSizeOptions() {
+    final variants = _variantOptionsForCurrentSport()
+        .map((variant) => variant.teamSizePerSide)
+        .where((value) => value >= 2)
+        .toSet()
+        .toList()
+      ..sort();
+    if (variants.isNotEmpty) return variants;
+    final defaultSize = _defaultTeamSizeForSport(_selectedSport);
+    final fallback = <int>{defaultSize, 2, 3, 5, 7};
+    final normalized = fallback.where((value) => value >= 2 && value <= 12).toList()
+      ..sort();
+    return normalized;
+  }
+
+  bool _hasTeamDetails(TeamInfo? info) {
+    if (info == null) return false;
+    return !info.isEmpty;
+  }
+
+  void _setMatchMode(String mode) {
+    if (_matchMode == mode) return;
+    setState(() {
+      _matchMode = mode;
+      if (_isTeamMode && _teamSizePerSide < 2) {
+        _teamSizePerSide = _defaultTeamSizeForSport(_selectedSport);
+        if (_teamSizePerSide < 2) {
+          _teamSizePerSide = 2;
+        }
+      }
+      if (!_isTeamMode) {
+        _teamNameController.clear();
+      }
+    });
   }
 
   List<int> _participantOptionsForCurrentSport() {
@@ -599,6 +640,92 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     }
   }
 
+  Future<String?> _promptGuestTeamName() async {
+    final controller = TextEditingController();
+    String? errorText;
+    try {
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: const Text('Nhập tên đội của bạn'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      hintText: 'Ví dụ: Warriors Community',
+                      errorText: errorText,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Huỷ'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final value = controller.text.trim();
+                    if (value.length < 3) {
+                      setLocalState(() {
+                        errorText = 'Tên đội cần tối thiểu 3 ký tự.';
+                      });
+                      return;
+                    }
+                    Navigator.of(context).pop(value);
+                  },
+                  child: const Text('Xác nhận'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      return result?.trim().isEmpty ?? true ? null : result?.trim();
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _joinTeamMatch(MatchRequest request) async {
+    final joinKey = '${request.id}::guestTeam';
+    if (_joining.contains(joinKey)) return;
+    final teamName = await _promptGuestTeamName();
+    if (!mounted || teamName == null) return;
+    setState(() => _joining.add(joinKey));
+    try {
+      final updated = await _api.joinMatchRequest(
+        request.id,
+        mode: 'team',
+        teamName: teamName,
+      );
+      if (!mounted) return;
+      final nextRequests = _requests
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList();
+      setState(() {
+        _joining.remove(joinKey);
+        _requests = nextRequests;
+        _updateAutoCancelledTracking(
+          _autoCancelExpiredRequests(nextRequests).autoCancelledIds,
+        );
+      });
+      if (!mounted) return;
+      await _showSnack('Đã nhận lời mời cho đội của bạn.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _joining.remove(joinKey));
+      if (!mounted) return;
+      await _showSnack(_friendlyError(e), isError: true);
+    }
+  }
+
   Future<void> _cancelRequest(MatchRequest request) async {
     if (_cancelling.contains(request.id)) return;
     setState(() => _cancelling.add(request.id));
@@ -786,22 +913,29 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       return;
     }
 
+    final bool isTeamMode = _isTeamMode;
     final teamSize = _teamSizePerSide;
-    if (teamSize < 1) {
-      await _showSnack('Vui lòng chọn số người mỗi đội.', isError: true);
+    if (teamSize < (isTeamMode ? 2 : 1)) {
+      await _showSnack('Vui lòng chọn số người phù hợp cho mỗi đội.', isError: true);
       return;
     }
 
     var participantLimit = _participantLimit;
-    final minimumParticipants = teamSize * 2;
-    if (participantLimit < minimumParticipants) {
-      participantLimit = minimumParticipants;
+    if (isTeamMode) {
+      participantLimit = teamSize * 2;
+    } else {
+      final minimumParticipants = teamSize * 2;
+      if (participantLimit < minimumParticipants) {
+        participantLimit = minimumParticipants;
+      }
+      if (participantLimit < 2) participantLimit = 2;
+      final maxParticipants = _maxParticipantsForSport(sportId);
+      if (participantLimit > maxParticipants) {
+        participantLimit = maxParticipants;
+      }
     }
-    if (participantLimit < 2) participantLimit = 2;
-    final maxParticipants = _maxParticipantsForSport(sportId);
-    if (participantLimit > maxParticipants) {
-      participantLimit = maxParticipants;
-    }
+
+    final hostTeamName = _teamNameController.text.trim();
 
     setState(() => _submitting = true);
     try {
@@ -813,17 +947,22 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
         skillMax: _skillRange.end.round(),
         facilityId: facilityId,
         courtId: courtId,
-        participantLimit: participantLimit,
+        participantLimit: isTeamMode ? null : participantLimit,
         teamSize: teamSize,
         notes: _notesController.text.trim().isEmpty
             ? null
             : _notesController.text.trim(),
+        mode: isTeamMode ? 'team' : 'solo',
+        teamName: isTeamMode && hostTeamName.isNotEmpty ? hostTeamName : null,
       );
       if (!mounted) return;
       final nextRequests = [request, ..._requests];
       setState(() {
         _submitting = false;
         _notesController.clear();
+        if (isTeamMode) {
+          _teamNameController.clear();
+        }
         _requests = nextRequests;
         _updateAutoCancelledTracking(
           _autoCancelExpiredRequests(nextRequests).autoCancelledIds,
@@ -892,6 +1031,132 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTeamModeSummary(
+    MatchRequest request, {
+    String? perTeamBadge,
+  }) {
+    final hostName = request.hostTeam?.teamName?.trim();
+    final guestInfo = request.guestTeam;
+    final hasGuestTeam = _hasTeamDetails(guestInfo);
+    final guestName = guestInfo?.teamName?.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildTeamModeTile(
+          title: 'Đội chủ nhà',
+          subtitle: hostName?.isNotEmpty == true
+              ? hostName!
+              : 'Chủ sân chưa đặt tên đội',
+          icon: Icons.flag_circle,
+          highlight: true,
+          badge: perTeamBadge,
+        ),
+        const SizedBox(height: 10),
+        _buildTeamModeTile(
+          title: 'Đội khách',
+          subtitle: hasGuestTeam
+              ? (guestName?.isNotEmpty == true
+                  ? guestName!
+                  : 'Đội khách đã xác nhận')
+              : 'Chưa có đội khách nhận lời',
+          icon: hasGuestTeam
+              ? Icons.military_tech
+              : Icons.hourglass_bottom,
+          highlight: hasGuestTeam,
+          pending: !hasGuestTeam,
+          badge: perTeamBadge,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTeamModeTile({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    String? badge,
+    bool highlight = false,
+    bool pending = false,
+  }) {
+    final theme = Theme.of(context);
+    final bgColor = highlight
+        ? const Color(0xFFE8F5E9)
+        : pending
+            ? const Color(0xFFFFF8E1)
+            : Colors.white;
+    final borderColor = pending
+        ? const Color(0xFFFFA726)
+        : (highlight ? const Color(0xFF4CAF50) : Colors.black);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: 2),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black,
+            offset: Offset(3, 3),
+            blurRadius: 0,
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor, width: 2),
+            ),
+            child: Icon(icon, color: borderColor, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (badge != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: highlight
+                    ? const Color(0xFFE1F5FE)
+                    : const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: borderColor, width: 2),
+              ),
+              child: Text(
+                badge,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1802,6 +2067,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
   Widget _buildCreateCard(ThemeData theme) {
     final isLoggedIn = AuthService.instance.isLoggedIn;
     final variantOptions = _variantOptionsForCurrentSport();
+    final disableParticipantLimit = _isTeamMode;
     return NeuContainer(
       color: const Color(0xFFFFFAF0),
       borderColor: Colors.black,
@@ -2040,6 +2306,26 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
             _buildDesiredTimeButton(),
             const SizedBox(height: 20),
             Text(
+              'KIỂU GHÉP TRẬN',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildMatchModeSelector(),
+            const SizedBox(height: 16),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              switchInCurve: Curves.easeOutBack,
+              switchOutCurve: Curves.easeInBack,
+              child: _isTeamMode
+                  ? _buildTeamModeExtras(theme)
+                  : const SizedBox.shrink(),
+            ),
+            if (_isTeamMode) const SizedBox(height: 12),
+            const SizedBox(height: 20),
+            Text(
               'TRÌNH ĐỘ & SỐ NGƯỜI',
               style: theme.textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w800,
@@ -2066,7 +2352,9 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                   style: theme.textTheme.bodySmall,
                 ),
                 Text(
-                  'Số người: $_participantLimit tổng, $_teamSizePerSide mỗi bên',
+                  _isTeamMode
+                      ? 'Đội vs đội • $_teamSizePerSide người/đội'
+                      : 'Số người: $_participantLimit tổng, $_teamSizePerSide mỗi bên',
                   style: theme.textTheme.bodySmall,
                 ),
               ],
@@ -2099,11 +2387,13 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
             ],
             const SizedBox(height: 12),
             InkWell(
-              onTap: _showParticipantLimitSheet,
+              onTap: disableParticipantLimit ? null : _showParticipantLimitSheet,
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFFAF0),
+                  color: disableParticipantLimit
+                      ? const Color(0xFFE0E0E0)
+                      : const Color(0xFFFFFAF0),
                   border: Border.all(color: Colors.black, width: 2),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
@@ -2123,7 +2413,9 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Giới hạn người tham gia',
+                            disableParticipantLimit
+                                ? 'Giới hạn người tham gia (khóa)'
+                                : 'Giới hạn người tham gia',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.black.withValues(alpha: 0.6),
@@ -2132,7 +2424,9 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '$_participantLimit người',
+                            disableParticipantLimit
+                                ? '${_teamSizePerSide * 2} người (cố định theo cỡ đội)'
+                                : '$_participantLimit người',
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -2142,11 +2436,24 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                         ],
                       ),
                     ),
-                    const Icon(Icons.arrow_drop_down, color: Colors.black),
+                    Icon(
+                      disableParticipantLimit
+                          ? Icons.lock_outline
+                          : Icons.arrow_drop_down,
+                      color: Colors.black,
+                    ),
                   ],
                 ),
               ),
             ),
+            if (_isTeamMode)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 4),
+                child: Text(
+                  'Tổng số người được tự tính theo 2 đội, bạn không cần điều chỉnh mục này.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
             const SizedBox(height: 12),
             InkWell(
               onTap: _showTeamSizeSheet,
@@ -2564,6 +2871,194 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     );
   }
 
+  Widget _buildMatchModeSelector() {
+    final theme = Theme.of(context);
+
+    Widget buildOption({
+      required String value,
+      required String title,
+      required String description,
+      required IconData icon,
+    }) {
+      final selected = _matchMode == value;
+      final bgColor = selected ? const Color(0xFF141E30) : Colors.white;
+      final textColor = selected ? Colors.white : Colors.black87;
+      final accent = selected ? const Color(0xFFFFD54F) : Colors.black;
+
+      return InkWell(
+        onTap: () => _setMatchMode(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.black, width: 3),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black,
+                offset: Offset(4, 4),
+                blurRadius: 0,
+              ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : Colors.black.withValues(alpha: 0.05),
+                  border: Border.all(color: accent, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: accent, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: textColor,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: textColor.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                Icon(
+                  Icons.check_circle,
+                  color: accent,
+                  size: 24,
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: buildOption(
+            value: 'solo',
+            title: 'Ghép người lẻ',
+            description: 'Hệ thống tìm người chơi phù hợp và phân về hai đội.',
+            icon: Icons.person_add_alt,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: buildOption(
+            value: 'team',
+            title: 'Đội vs đội',
+            description: 'Tạo lời mời cho cả đội và tìm đối thủ ngang sức.',
+            icon: Icons.sports_martial_arts,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTeamModeExtras(ThemeData theme) {
+    final quickSizes = _teamModeSizeOptions();
+
+    Widget buildSizeChip(int size) {
+      final selected = _teamSizePerSide == size;
+      return ChoiceChip(
+        label: Text('$size người/đội'),
+        selected: selected,
+        onSelected: (_) {
+          setState(() {
+            _teamSizePerSide = size;
+            _participantLimit = size * 2;
+            _selectedVariantId = null;
+          });
+        },
+      );
+    }
+
+    return Container(
+      key: const ValueKey('team-mode-extras'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE6F4FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black, width: 3),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black,
+            offset: Offset(4, 4),
+            blurRadius: 0,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Thông tin đội của bạn',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _teamNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Tên đội chủ nhà',
+              hintText: 'Ví dụ: Khu Liên Hợp All Stars',
+              prefixIcon: Icon(Icons.emoji_events_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (quickSizes.isNotEmpty) ...[
+            Text(
+              'Chọn nhanh cỡ đội phổ biến',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: quickSizes.map(buildSizeChip).toList(),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Row(
+            children: [
+              const Icon(Icons.info_outline, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Tên đội sẽ hiển thị cho đối thủ và được dùng khi xác nhận trận đấu.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyState(ThemeData theme, {required bool filteredByFilters}) {
     final icon = filteredByFilters
         ? Icons.filter_alt_off_outlined
@@ -2626,6 +3121,15 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       : '(chưa rõ)';
     final hasBookingWindow =
         request.bookingStart != null && request.bookingEnd != null;
+    final bool isTeamModeRequest = request.mode.toLowerCase() == 'team';
+    final bool guestTeamReady = _hasTeamDetails(request.guestTeam);
+    final int inferredTeamSize = request.teamSize ??
+      (request.participantLimit != null
+        ? (request.participantLimit! ~/ 2)
+        : 0);
+    final String? perTeamBadge = inferredTeamSize > 0
+      ? '$inferredTeamSize người/đội'
+      : null;
 
     final int teamACount = request.teamA.length;
     final int teamBCount = request.teamB.length;
@@ -2638,6 +3142,7 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
         : '$teamBCount';
 
     final String joinPrefix = '${request.id}::';
+    final bool joiningGuestTeam = _joining.contains('${request.id}::guestTeam');
     final bool joiningTeamA = _joining.contains('${request.id}::teamA');
     final bool joiningTeamB = _joining.contains('${request.id}::teamB');
     final bool joinInProgress = _joining.any(
@@ -2645,12 +3150,20 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
     );
     final bool cancelling = _cancelling.contains(request.id);
 
-    final bool matchFull =
-        request.participantLimit != null &&
+    final bool matchFull = isTeamModeRequest
+      ? guestTeamReady
+      : request.participantLimit != null &&
         request.participantCount >= request.participantLimit!;
     final bool teamAFull = teamLimit != null && teamACount >= teamLimit;
     final bool teamBFull = teamLimit != null && teamBCount >= teamLimit;
     final String? myTeam = request.myTeam;
+    final String participantText = isTeamModeRequest
+      ? (guestTeamReady
+        ? 'Đã có 2 đội${perTeamBadge != null ? ' ($perTeamBadge)' : ''}'
+        : 'Còn thiếu đội khách${perTeamBadge != null ? ' ($perTeamBadge)' : ''}')
+      : (request.participantLimit != null
+        ? '${request.participantCount}/${request.participantLimit} người'
+        : '${request.participantCount} người');
     final actions = <Widget>[];
     final timeRangeText = _formatRangeForCard(request);
 
@@ -2698,7 +3211,104 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
       }
     }
 
-    if (myTeam != null && !isCancelled) {
+    if (isTeamModeRequest) {
+      if (myTeam != null && !isCancelled) {
+        actions.add(
+          Chip(
+            avatar: const Icon(Icons.military_tech, size: 18),
+            label: Text(
+              myTeam == 'teamA'
+                  ? 'Đội bạn giữ sân (Team chủ)'
+                  : 'Đội bạn là đội khách',
+            ),
+          ),
+        );
+      }
+
+      if (isCancelled) {
+        actions.add(
+          Chip(
+            avatar: Icon(
+              autoCancelled
+                  ? Icons.schedule_send_outlined
+                  : Icons.cancel_outlined,
+              size: 18,
+            ),
+            label: Text(
+              autoCancelled
+                  ? 'Tự hủy do thiếu đội'
+                  : 'Lời mời đã hủy',
+            ),
+          ),
+        );
+      } else if (!isOpen) {
+        actions.add(
+          Chip(
+            avatar: const Icon(Icons.sports_score_outlined, size: 18),
+            label: const Text('Lời mời đã đóng'),
+          ),
+        );
+      } else if (matchFull) {
+        actions.add(
+          Chip(
+            avatar: const Icon(Icons.handshake_outlined, size: 18),
+            label: const Text('Đã có đội khách'),
+          ),
+        );
+      } else {
+        actions.add(
+          Chip(
+            avatar: const Icon(Icons.hourglass_bottom, size: 18),
+            label: const Text('Đang chờ đội khách'),
+          ),
+        );
+
+        if (!isOwn) {
+          actions.add(
+            NeuButton(
+              buttonHeight: 44,
+              borderRadius: BorderRadius.circular(14),
+              buttonColor: joiningGuestTeam
+                  ? Colors.grey
+                  : theme.colorScheme.primary,
+              onPressed:
+                  joiningGuestTeam ? () {} : () => _joinTeamMatch(request),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (joiningGuestTeam)
+                      NeoLoadingDot(
+                        size: 18,
+                        fillColor: Colors.white,
+                        borderColor: Colors.black,
+                        shadowColor: Colors.black.withValues(alpha: 0.55),
+                      )
+                    else
+                      const Icon(
+                        Icons.sports_martial_arts,
+                        size: 18,
+                        color: Colors.white,
+                      ),
+                    const SizedBox(width: 8),
+                    Text(
+                      joiningGuestTeam
+                          ? 'Đang gửi...'
+                          : 'Thách đấu bằng đội bạn',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    } else if (myTeam != null && !isCancelled) {
       actions.add(
         Chip(
           avatar: const Icon(Icons.handshake, size: 18),
@@ -2792,9 +3402,6 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
         ),
       );
     }
-    final participantText = request.participantLimit != null
-      ? '${request.participantCount}/${request.participantLimit} người'
-      : '${request.participantCount} người';
     final facilityParts = <String>[
       'Cơ sở: $facilityLabel',
       'Sân: $courtLabel',
@@ -2994,28 +3601,36 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                 ),
               ),
             ],
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildTeamSnapshot(
-                    label: 'Team A',
-                    count: teamACount,
-                    limit: teamLimit,
-                    selected: myTeam == 'teamA',
+            if (isTeamModeRequest) ...[
+              const SizedBox(height: 12),
+              _buildTeamModeSummary(
+                request,
+                perTeamBadge: perTeamBadge,
+              ),
+            ] else ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTeamSnapshot(
+                      label: 'Team A',
+                      count: teamACount,
+                      limit: teamLimit,
+                      selected: myTeam == 'teamA',
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildTeamSnapshot(
-                    label: 'Team B',
-                    count: teamBCount,
-                    limit: teamLimit,
-                    selected: myTeam == 'teamB',
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTeamSnapshot(
+                      label: 'Team B',
+                      count: teamBCount,
+                      limit: teamLimit,
+                      selected: myTeam == 'teamB',
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
