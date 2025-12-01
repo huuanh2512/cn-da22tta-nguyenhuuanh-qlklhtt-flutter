@@ -590,6 +590,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 
     return SportsGradientBackground(
       variant: SportsBackgroundVariant.customer,
+      hideTopLeftAccent: true,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         extendBody: false,
