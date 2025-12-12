@@ -15,6 +15,7 @@ import 'package:khu_lien_hop_tt/staff/staff_customers_page.dart';
 import 'package:khu_lien_hop_tt/staff/staff_invoices_page.dart';
 import 'package:khu_lien_hop_tt/staff/staff_profile_page.dart';
 import 'package:khu_lien_hop_tt/staff/staff_notifications_page.dart';
+import 'package:khu_lien_hop_tt/staff/staff_reports_page.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_button.dart';
 import 'package:khu_lien_hop_tt/widgets/neu_text.dart';
 import 'package:khu_lien_hop_tt/widgets/neo_loading.dart';
@@ -521,8 +522,69 @@ class _StaffHomePageState extends State<StaffHomePage> {
         children: [
           _buildFacilityCard(_data!.facility, greetingName),
           const SizedBox(height: 16),
+          _buildQuickActionsRow(),
+          const SizedBox(height: 16),
           _buildCourtsSection(_data!.courts),
         ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionsRow() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildQuickActionCard(
+            icon: Icons.bar_chart,
+            label: 'Báo cáo',
+            color: const Color(0xFFFFF4C7),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const StaffReportsPage(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionCard({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: NeuContainer(
+        borderRadius: BorderRadius.circular(16),
+        color: color,
+        borderColor: Colors.black,
+        borderWidth: 3,
+        shadowColor: Colors.black.withValues(alpha: 0.35),
+        offset: const Offset(5, 5),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 22, color: Colors.black),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                  color: Colors.black,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

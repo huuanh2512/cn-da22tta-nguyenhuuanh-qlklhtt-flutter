@@ -1447,6 +1447,10 @@ async function autoCancelStaleBookings() {
         status: 'cancelled',
         cancelledAt: cancelTime,
         cancelledBy: SYSTEM_ACTOR_ID,
+        cancelledByRole: 'system',
+        cancelledByUserId: null,
+        cancelReasonCode: 'auto_pending_timeout',
+        cancelReasonText: 'Tự động hủy do quá thời gian chờ duyệt',
         cancelledReason: 'pending_timeout',
         updatedAt: cancelTime,
       };
@@ -1465,10 +1469,10 @@ async function autoCancelStaleBookings() {
         action: 'booking.auto-cancel',
         resource: 'booking',
         resourceId: bookingId,
-        changes: { status: 'cancelled', cancelledReason: 'pending_timeout' },
+        changes: { status: 'cancelled', cancelledReason: 'pending_timeout', cancelReasonCode: 'auto_pending_timeout' },
       });
 
-      await syncMatchRequestBooking(updatedBooking, { status: 'cancelled' });
+      await syncMatchRequestBooking(updatedBooking, { status: 'cancelled', cancelReasonCode: 'auto_pending_timeout', cancelledByRole: 'system' });
 
       try {
         await voidBookingInvoice(updatedBooking, { reason: 'system_auto_timeout' });
@@ -1829,7 +1833,7 @@ async function ensureMatchRequestBooking(matchRequestDoc, { req } = {}) {
   return refreshed || matchRequestDoc;
 }
 
-async function syncMatchRequestBooking(updatedBooking, { status }) {
+async function syncMatchRequestBooking(updatedBooking, { status, cancelReasonCode, cancelledByRole } = {}) {
   if (!updatedBooking?.matchRequestId) return;
   const matchRequestId = coerceObjectId(updatedBooking.matchRequestId);
   if (!matchRequestId) return;
@@ -1844,6 +1848,14 @@ async function syncMatchRequestBooking(updatedBooking, { status }) {
   };
   if (normalizedStatus === 'cancelled') {
     statusUpdate.status = 'cancelled';
+    statusUpdate.cancelledAt = statusUpdate.updatedAt;
+    // Propagate cancellation metadata from booking if provided
+    if (cancelReasonCode) {
+      statusUpdate.cancelReasonCode = cancelReasonCode;
+    }
+    if (cancelledByRole) {
+      statusUpdate.cancelledByRole = cancelledByRole;
+    }
   } else if (normalizedStatus === 'pending' || normalizedStatus === 'confirmed' || normalizedStatus === 'completed') {
     statusUpdate.status = 'matched';
   }
@@ -1928,6 +1940,10 @@ async function cancelOverlappingMatchRequests(bookingDoc) {
     bookingStatus: 'cancelled',
     cancelledReason: 'auto_conflict',
     cancelledAt: now,
+    cancelledByRole: 'system',
+    cancelledByUserId: null,
+    cancelReasonCode: 'overlapped_booking',
+    cancelReasonText: 'Hủy do sân đã được đặt trùng khung giờ',
     updatedAt: now,
   };
   if (conflictBookingId) updateFields.conflictBookingId = conflictBookingId;
@@ -2374,6 +2390,10 @@ app.put('/api/bookings/:id/cancel', authMiddleware, requireVerifiedCustomer, asy
       updatedAt: now,
       cancelledAt: now,
       cancelledBy: userId,
+      cancelledByRole: 'customer',
+      cancelledByUserId: userId,
+      cancelReasonCode: 'customer_cancel',
+      cancelReasonText: 'Khách hàng hủy đặt sân',
       cancelledReason: 'customer_cancelled',
     };
 
@@ -2390,10 +2410,10 @@ app.put('/api/bookings/:id/cancel', authMiddleware, requireVerifiedCustomer, asy
       action: 'booking.cancel',
       resource: 'booking',
       resourceId: bookingId,
-      changes: { status: 'cancelled', cancelledAt: now },
+      changes: { status: 'cancelled', cancelledAt: now, cancelReasonCode: 'customer_cancel' },
     });
 
-    await syncMatchRequestBooking(updatedBooking, { status: 'cancelled' });
+    await syncMatchRequestBooking(updatedBooking, { status: 'cancelled', cancelReasonCode: 'customer_cancel', cancelledByRole: 'customer' });
 
     try {
       await voidBookingInvoice(updatedBooking, { reason: 'customer_cancelled' });
@@ -3457,10 +3477,16 @@ app.put('/api/match_requests/:id/cancel', authMiddleware, requireVerifiedCustome
     }
 
     const now = new Date();
+    const cancelReasonCode = isCreator ? 'manual_cancel' : 'manual_cancel';
+    const cancelledByRole = isCreator ? 'customer' : 'admin';
     const updateFields = {
       status: 'cancelled',
       cancelledAt: now,
       cancelledBy: userId,
+      cancelledByRole,
+      cancelledByUserId: userId,
+      cancelReasonCode,
+      cancelReasonText: isCreator ? 'Người tạo hủy lời mời' : 'Quản trị viên hủy lời mời',
       cancelledReason: isCreator ? 'creator_cancelled' : 'admin_cancelled',
       updatedAt: now,
     };
@@ -3483,6 +3509,10 @@ app.put('/api/match_requests/:id/cancel', authMiddleware, requireVerifiedCustome
             status: 'cancelled',
             cancelledAt: now,
             cancelledBy: userId,
+            cancelledByRole,
+            cancelledByUserId: userId,
+            cancelReasonCode,
+            cancelReasonText: isCreator ? 'Người tạo hủy lời mời' : 'Quản trị viên hủy lời mời',
             cancelledReason: 'match_request_cancelled',
             updatedAt: now,
           },
@@ -3734,12 +3764,25 @@ app.patch('/api/staff/bookings/:id/status', async (req, res, next) => {
     }
 
     const statusUpdatedAt = new Date();
+    const updateFields = { status: nextStatus, updatedAt: statusUpdatedAt };
+
+    // Add cancellation metadata if staff is cancelling/declining
+    if (nextStatus === 'cancelled') {
+      updateFields.cancelledAt = statusUpdatedAt;
+      updateFields.cancelledBy = staffUser._id;
+      updateFields.cancelledByRole = 'staff';
+      updateFields.cancelledByUserId = staffUser._id;
+      updateFields.cancelReasonCode = 'staff_cancel';
+      updateFields.cancelReasonText = 'Nhân viên hủy/không duyệt đặt sân';
+      updateFields.cancelledReason = 'staff_cancelled';
+    }
+
     await db.collection('bookings').updateOne(
       { _id: bookingDoc._id },
-      { $set: { status: nextStatus, updatedAt: statusUpdatedAt } },
+      { $set: updateFields },
     );
 
-    const updatedBooking = { ...bookingDoc, status: nextStatus, updatedAt: statusUpdatedAt };
+    const updatedBooking = { ...bookingDoc, ...updateFields };
 
     await recordAudit(req, {
       actorId: staffUser._id,
@@ -3749,6 +3792,7 @@ app.patch('/api/staff/bookings/:id/status', async (req, res, next) => {
       changes: sanitizeAuditData({
         previousStatus: bookingDoc.status ?? null,
         nextStatus,
+        ...(nextStatus === 'cancelled' ? { cancelReasonCode: 'staff_cancel' } : {}),
       }),
     });
 
@@ -4064,6 +4108,631 @@ app.patch('/api/staff/invoices/:id/status', async (req, res, next) => {
     }
 
     res.json(shaped);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================================================
+// STAFF REPORTS - Analytics endpoints for "Báo cáo thống kê" dashboard
+// =============================================================================
+
+const BOOKING_REVENUE_STATUSES = new Set(['confirmed', 'completed', 'matched', 'paid']);
+const BOOKING_ACTIVE_STATUSES = new Set(['pending', 'confirmed', 'completed', 'matched', 'paid']);
+
+function parseReportRange(req) {
+  const now = new Date();
+  let to = coerceDateValue(req?.query?.to) ?? now;
+  let from = coerceDateValue(req?.query?.from);
+  if (!from) {
+    // Default to last 7 days
+    from = new Date(to.getTime() - 6 * 24 * 60 * 60 * 1000);
+  }
+  if (from > to) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  return { from, to };
+}
+
+function resolveReportFacilityId(req, staffUser) {
+  // Staff must have a facilityId assigned
+  const staffFacilityId = coerceObjectId(staffUser?.facilityId);
+  const queryFacilityId = coerceObjectId(req?.query?.facilityId);
+
+  // If query facilityId is provided, validate it matches the staff's assigned facility
+  if (queryFacilityId) {
+    if (!staffFacilityId || !queryFacilityId.equals(staffFacilityId)) {
+      return { error: { status: 403, message: 'Không có quyền truy cập cơ sở này' } };
+    }
+    return { facilityId: queryFacilityId };
+  }
+
+  if (!staffFacilityId) {
+    return { error: { status: 403, message: 'Nhân viên chưa được gán cơ sở' } };
+  }
+
+  return { facilityId: staffFacilityId };
+}
+
+app.get('/api/staff/reports/summary', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { facilityId, error } = resolveReportFacilityId(req, staffUser);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { from, to } = parseReportRange(req);
+    const bookingMatch = {
+      facilityId,
+      deletedAt: { $exists: false },
+      start: { $gte: from, $lte: to },
+    };
+
+    const revenueStatuses = Array.from(BOOKING_REVENUE_STATUSES);
+    const amountExpr = { $ifNull: ['$total', { $ifNull: ['$pricingSnapshot.total', '$pricingSnapshot.subtotal'] }] };
+    const topLimit = 5;
+
+    const [report] = await db.collection('bookings').aggregate([
+      { $match: bookingMatch },
+      {
+        $addFields: {
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+          amountForRevenue: amountExpr,
+        },
+      },
+      {
+        $facet: {
+          totals: [
+            {
+              $group: {
+                _id: null,
+                bookingsTotal: { $sum: 1 },
+                revenueTotal: {
+                  $sum: {
+                    $cond: [
+                      { $in: ['$statusLower', revenueStatuses] },
+                      '$amountForRevenue',
+                      0,
+                    ],
+                  },
+                },
+                cancelledCount: {
+                  $sum: { $cond: [{ $eq: ['$statusLower', 'cancelled'] }, 1, 0] },
+                },
+                pendingCount: {
+                  $sum: { $cond: [{ $eq: ['$statusLower', 'pending'] }, 1, 0] },
+                },
+                confirmedCount: {
+                  $sum: { $cond: [{ $eq: ['$statusLower', 'confirmed'] }, 1, 0] },
+                },
+              },
+            },
+          ],
+          bookingsByStatus: [
+            { $group: { _id: '$statusLower', count: { $sum: 1 } } },
+            { $project: { _id: 0, status: { $ifNull: ['$_id', ''] }, count: 1 } },
+          ],
+          revenueBySport: [
+            { $match: { $expr: { $in: ['$statusLower', revenueStatuses] } } },
+            {
+              $group: {
+                _id: '$sportId',
+                revenue: { $sum: '$amountForRevenue' },
+                count: { $sum: 1 },
+              },
+            },
+            { $lookup: { from: 'sports', localField: '_id', foreignField: '_id', as: 'sport' } },
+            { $unwind: { path: '$sport', preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                _id: 0,
+                sportId: { $cond: [{ $ifNull: ['$_id', false] }, { $toString: '$_id' }, null] },
+                sportName: '$sport.name',
+                revenue: { $ifNull: ['$revenue', 0] },
+                count: 1,
+              },
+            },
+          ],
+          topCourts: [
+            { $match: { $expr: { $in: ['$statusLower', revenueStatuses] } } },
+            {
+              $group: {
+                _id: '$courtId',
+                revenue: { $sum: '$amountForRevenue' },
+                bookingsCount: { $sum: 1 },
+              },
+            },
+            { $sort: { bookingsCount: -1, revenue: -1, _id: 1 } },
+            { $limit: topLimit },
+            { $lookup: { from: 'courts', localField: '_id', foreignField: '_id', as: 'court' } },
+            { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'facilities', localField: 'court.facilityId', foreignField: '_id', as: 'facility' } },
+            { $unwind: { path: '$facility', preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                _id: 0,
+                courtId: { $cond: [{ $ifNull: ['$_id', false] }, { $toString: '$_id' }, null] },
+                courtName: '$court.name',
+                facilityName: '$facility.name',
+                bookingsCount: 1,
+                revenue: 1,
+              },
+            },
+          ],
+        },
+      },
+    ]).toArray();
+
+    const totals = report?.totals?.[0] ?? {};
+    const bookingsTotal = totals.bookingsTotal ?? 0;
+    const revenueTotal = totals.revenueTotal ?? 0;
+    const cancelRate = bookingsTotal > 0 ? (totals.cancelledCount ?? 0) / bookingsTotal : 0;
+    const pendingBookingsCount = totals.pendingCount ?? 0;
+    const confirmedBookingsCount = totals.confirmedCount ?? 0;
+
+    // Get invoice stats
+    const invoicePipeline = [
+      {
+        $lookup: {
+          from: 'bookings',
+          let: { bookingId: '$bookingId' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$_id', '$$bookingId'] },
+                facilityId,
+                deletedAt: { $exists: false },
+                start: { $gte: from, $lte: to },
+              },
+            },
+          ],
+          as: 'booking',
+        },
+      },
+      { $unwind: { path: '$booking', preserveNullAndEmptyArrays: false } },
+      { $lookup: { from: 'payments', localField: '_id', foreignField: 'invoiceId', as: 'payments' } },
+    ];
+
+    const invoiceDocs = await db.collection('invoices').aggregate(invoicePipeline).toArray();
+    const shapedInvoices = invoiceDocs.map((doc) => shapeStaffInvoice(doc)).filter(Boolean);
+    const inactiveInvoiceStatuses = new Set(['void', 'cancelled', 'canceled', 'refunded']);
+    const invoicesTotal = shapedInvoices.length;
+    let unpaidInvoicesCount = 0;
+    let unpaidAmountTotal = 0;
+    for (const invoice of shapedInvoices) {
+      const status = typeof invoice.status === 'string' ? invoice.status.trim().toLowerCase() : '';
+      const outstanding = Number.isFinite(invoice.outstanding) ? invoice.outstanding : Math.max(0, (invoice.amount ?? 0) - (invoice.totalPaid ?? 0));
+      if (inactiveInvoiceStatuses.has(status)) continue;
+      if (outstanding > 0) {
+        unpaidInvoicesCount += 1;
+        unpaidAmountTotal += outstanding;
+      }
+    }
+
+    // Cancellation analytics for summary
+    const cancelReasonLabels = {
+      customer_cancel: 'Khách hàng hủy đặt sân',
+      staff_cancel: 'Nhân viên hủy/không duyệt đặt sân',
+      auto_pending_timeout: 'Tự động hủy do quá thời gian chờ duyệt',
+      court_unavailable: 'Sân không khả dụng',
+      overlapped_booking: 'Hủy do sân đã được đặt trùng khung giờ',
+      payment_failed: 'Thanh toán thất bại',
+      not_enough_players_at_start: 'Hủy do không đủ người khi đến giờ bắt đầu',
+      manual_cancel: 'Hủy thủ công',
+      other: 'Lý do khác',
+      unknown: 'Không rõ',
+    };
+
+    const [cancellationReport] = await db.collection('bookings').aggregate([
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          $or: [
+            { cancelledAt: { $gte: from, $lte: to } },
+            { start: { $gte: from, $lte: to }, status: 'cancelled' },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+          reasonCodeNorm: { $ifNull: ['$cancelReasonCode', 'unknown'] },
+        },
+      },
+      { $match: { statusLower: 'cancelled' } },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          topReasons: [
+            { $group: { _id: '$reasonCodeNorm', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 5 },
+            { $project: { _id: 0, code: '$_id', count: 1 } },
+          ],
+          topCancelledCourts: [
+            {
+              $group: {
+                _id: '$courtId',
+                cancelledCount: { $sum: 1 },
+              },
+            },
+            { $sort: { cancelledCount: -1 } },
+            { $limit: 5 },
+            { $lookup: { from: 'courts', localField: '_id', foreignField: '_id', as: 'court' } },
+            { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                _id: 0,
+                courtId: { $cond: [{ $ifNull: ['$_id', false] }, { $toString: '$_id' }, null] },
+                courtName: { $ifNull: ['$court.name', 'Không rõ'] },
+                cancelledCount: 1,
+              },
+            },
+          ],
+        },
+      },
+    ]).toArray();
+
+    const cancelledBookings = cancellationReport?.total?.[0]?.count ?? (totals.cancelledCount ?? 0);
+
+    // Add cancel rate per court
+    const topCancelledCourts = (cancellationReport?.topCancelledCourts ?? []).map((court) => {
+      const courtTotalBookings = report?.topCourts?.find((c) => c.courtId === court.courtId)?.bookingsCount ?? court.cancelledCount;
+      const courtCancelRate = courtTotalBookings > 0 ? court.cancelledCount / courtTotalBookings : 0;
+      return { ...court, cancelRate: courtCancelRate };
+    });
+
+    const topReasons = (cancellationReport?.topReasons ?? []).map((item) => ({
+      code: item.code || 'unknown',
+      text: cancelReasonLabels[item.code] ?? cancelReasonLabels.unknown,
+      count: item.count ?? 0,
+    }));
+
+    // Get active courts (non-cancelled bookings with revenue)
+    const topActiveCourts = (report?.topCourts ?? []).slice(0, 5).map((court) => ({
+      courtId: court.courtId,
+      courtName: court.courtName,
+      bookingsCount: court.bookingsCount,
+      revenue: court.revenue,
+    }));
+
+    res.json({
+      range: { from: from.toISOString(), to: to.toISOString() },
+      kpis: {
+        revenueTotal,
+        bookingsTotal,
+        invoicesTotal,
+        unpaidInvoicesCount,
+        unpaidAmountTotal,
+        cancelRate,
+        pendingBookingsCount,
+        confirmedBookingsCount,
+      },
+      breakdown: {
+        bookingsByStatus: report?.bookingsByStatus ?? [],
+        revenueBySport: report?.revenueBySport ?? [],
+        topCourts: report?.topCourts ?? [],
+      },
+      cancellations: {
+        cancelledBookings,
+        cancelRate,
+        topReasons,
+        topCancelledCourts,
+        topActiveCourts,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/reports/revenue-daily', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { facilityId, error } = resolveReportFacilityId(req, staffUser);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { from, to } = parseReportRange(req);
+    const revenueStatuses = Array.from(BOOKING_REVENUE_STATUSES);
+    const amountExpr = { $ifNull: ['$total', { $ifNull: ['$pricingSnapshot.total', '$pricingSnapshot.subtotal'] }] };
+
+    const docs = await db.collection('bookings').aggregate([
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          start: { $gte: from, $lte: to },
+        },
+      },
+      {
+        $addFields: {
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+          amountForRevenue: amountExpr,
+        },
+      },
+      { $match: { statusLower: { $in: revenueStatuses } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$start' } },
+          revenue: { $sum: '$amountForRevenue' },
+          bookingsCount: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+      { $project: { _id: 0, date: '$_id', revenue: { $ifNull: ['$revenue', 0] }, bookingsCount: 1 } },
+    ]).toArray();
+
+    res.json(docs);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/reports/peak-hours', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { facilityId, error } = resolveReportFacilityId(req, staffUser);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { from, to } = parseReportRange(req);
+    const activeStatuses = Array.from(BOOKING_ACTIVE_STATUSES);
+
+    const docs = await db.collection('bookings').aggregate([
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          start: { $gte: from, $lte: to },
+        },
+      },
+      { $addFields: { statusLower: { $toLower: { $ifNull: ['$status', ''] } } } },
+      { $match: { statusLower: { $in: activeStatuses } } },
+      {
+        $group: {
+          _id: { $hour: '$start' },
+          bookingsCount: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+      { $project: { _id: 0, hour: '$_id', bookingsCount: 1 } },
+    ]).toArray();
+
+    res.json(docs);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff/reports/top-courts', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { facilityId, error } = resolveReportFacilityId(req, staffUser);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { from, to } = parseReportRange(req);
+    const revenueStatuses = Array.from(BOOKING_REVENUE_STATUSES);
+    const amountExpr = { $ifNull: ['$total', { $ifNull: ['$pricingSnapshot.total', '$pricingSnapshot.subtotal'] }] };
+    const parsedLimit = Number.parseInt(req?.query?.limit, 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 20) : 5;
+
+    const docs = await db.collection('bookings').aggregate([
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          start: { $gte: from, $lte: to },
+        },
+      },
+      {
+        $addFields: {
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+          amountForRevenue: amountExpr,
+        },
+      },
+      { $match: { statusLower: { $in: revenueStatuses } } },
+      {
+        $group: {
+          _id: '$courtId',
+          revenue: { $sum: '$amountForRevenue' },
+          bookingsCount: { $sum: 1 },
+        },
+      },
+      { $sort: { bookingsCount: -1, revenue: -1, _id: 1 } },
+      { $limit: limit },
+      { $lookup: { from: 'courts', localField: '_id', foreignField: '_id', as: 'court' } },
+      { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'facilities', localField: 'court.facilityId', foreignField: '_id', as: 'facility' } },
+      { $unwind: { path: '$facility', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 0,
+          courtId: { $cond: [{ $ifNull: ['$_id', false] }, { $toString: '$_id' }, null] },
+          courtName: '$court.name',
+          facilityName: '$facility.name',
+          bookingsCount: 1,
+          revenue: 1,
+        },
+      },
+    ]).toArray();
+
+    res.json(docs);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Cancellations analytics endpoint
+app.get('/api/staff/reports/cancellations', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { facilityId, error } = resolveReportFacilityId(req, staffUser);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    const { from, to } = parseReportRange(req);
+
+    // Cancellation reason code labels (Vietnamese)
+    const cancelReasonLabels = {
+      customer_cancel: 'Khách hàng hủy đặt sân',
+      staff_cancel: 'Nhân viên hủy/không duyệt đặt sân',
+      auto_pending_timeout: 'Tự động hủy do quá thời gian chờ duyệt',
+      court_unavailable: 'Sân không khả dụng',
+      overlapped_booking: 'Hủy do sân đã được đặt trùng khung giờ',
+      payment_failed: 'Thanh toán thất bại',
+      not_enough_players_at_start: 'Hủy do không đủ người khi đến giờ bắt đầu',
+      manual_cancel: 'Hủy thủ công',
+      other: 'Lý do khác',
+      unknown: 'Không rõ',
+    };
+
+    // Aggregate bookings cancellations
+    const bookingsCancelAgg = await db.collection('bookings').aggregate([
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          $or: [
+            { cancelledAt: { $gte: from, $lte: to } },
+            { start: { $gte: from, $lte: to }, status: 'cancelled' },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+          roleNorm: { $ifNull: [{ $toLower: '$cancelledByRole' }, 'unknown'] },
+          reasonCodeNorm: { $ifNull: ['$cancelReasonCode', 'unknown'] },
+        },
+      },
+      { $match: { statusLower: 'cancelled' } },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          byRole: [
+            { $group: { _id: '$roleNorm', count: { $sum: 1 } } },
+            { $project: { _id: 0, role: '$_id', count: 1 } },
+            { $sort: { count: -1 } },
+          ],
+          byReason: [
+            { $group: { _id: '$reasonCodeNorm', count: { $sum: 1 } } },
+            { $project: { _id: 0, code: '$_id', count: 1 } },
+            { $sort: { count: -1 } },
+          ],
+          byCourt: [
+            {
+              $group: {
+                _id: '$courtId',
+                cancelledCount: { $sum: 1 },
+              },
+            },
+            { $lookup: { from: 'courts', localField: '_id', foreignField: '_id', as: 'court' } },
+            { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'facilities', localField: 'court.facilityId', foreignField: '_id', as: 'facility' } },
+            { $unwind: { path: '$facility', preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                _id: 0,
+                courtId: { $cond: [{ $ifNull: ['$_id', false] }, { $toString: '$_id' }, null] },
+                courtName: { $ifNull: ['$court.name', 'Không rõ'] },
+                facilityName: { $ifNull: ['$facility.name', ''] },
+                cancelledCount: 1,
+              },
+            },
+            { $sort: { cancelledCount: -1, courtName: 1 } },
+          ],
+        },
+      },
+    ]).toArray();
+
+    const bookingsReport = bookingsCancelAgg[0] ?? {};
+    const cancelledBookings = bookingsReport.total?.[0]?.count ?? 0;
+
+    // Get total bookings for cancel rate calculation per court
+    const totalBookingsPerCourt = await db.collection('bookings').aggregate([
+      {
+        $match: {
+          facilityId,
+          deletedAt: { $exists: false },
+          start: { $gte: from, $lte: to },
+        },
+      },
+      {
+        $group: {
+          _id: '$courtId',
+          totalBookings: { $sum: 1 },
+        },
+      },
+    ]).toArray();
+    const totalBookingsMap = new Map(totalBookingsPerCourt.map((d) => [d._id?.toHexString?.() ?? String(d._id), d.totalBookings]));
+
+    // Aggregate match requests cancellations
+    const matchRequestsCancelAgg = await db.collection('match_requests').aggregate([
+      {
+        $match: {
+          facilityId,
+          $or: [
+            { cancelledAt: { $gte: from, $lte: to } },
+            { desiredStart: { $gte: from, $lte: to }, status: 'cancelled' },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+        },
+      },
+      { $match: { statusLower: 'cancelled' } },
+      { $count: 'count' },
+    ]).toArray();
+
+    const cancelledMatchRequests = matchRequestsCancelAgg[0]?.count ?? 0;
+
+    // Format byRole
+    const byRole = (bookingsReport.byRole ?? []).map((item) => ({
+      role: item.role || 'unknown',
+      count: item.count ?? 0,
+    }));
+
+    // Format byReason with Vietnamese labels
+    const byReason = (bookingsReport.byReason ?? []).map((item) => ({
+      code: item.code || 'unknown',
+      text: cancelReasonLabels[item.code] ?? cancelReasonLabels.unknown,
+      count: item.count ?? 0,
+    }));
+
+    // Format byCourt with cancel rates
+    const byCourt = (bookingsReport.byCourt ?? []).map((item) => {
+      const courtKey = item.courtId;
+      const totalBookings = totalBookingsMap.get(courtKey) ?? item.cancelledCount;
+      const cancelRate = totalBookings > 0 ? item.cancelledCount / totalBookings : 0;
+      return {
+        ...item,
+        totalBookings,
+        cancelRate,
+      };
+    });
+
+    res.json({
+      range: { from: from.toISOString(), to: to.toISOString() },
+      totals: {
+        cancelledBookings,
+        cancelledMatchRequests,
+      },
+      byRole,
+      byReason,
+      byCourt,
+    });
   } catch (error) {
     next(error);
   }

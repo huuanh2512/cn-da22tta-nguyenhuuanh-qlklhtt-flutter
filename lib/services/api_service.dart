@@ -1379,6 +1379,104 @@ class ApiService {
     return data.cast<Map<String, dynamic>>();
   }
 
+  // --- Staff Reports APIs ---
+  Future<Map<String, dynamic>> staffGetReportSummary({
+    DateTime? from,
+    DateTime? to,
+    String? facilityId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/staff/reports/summary').replace(
+      queryParameters: {
+        if (from != null) 'from': from.toIso8601String(),
+        if (to != null) 'to': to.toIso8601String(),
+        if (facilityId != null) 'facilityId': facilityId,
+      },
+    );
+    final res = await _get(uri, headers: _headers());
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  Future<List<dynamic>> staffGetRevenueDaily({
+    DateTime? from,
+    DateTime? to,
+    String? facilityId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/staff/reports/revenue-daily').replace(
+      queryParameters: {
+        if (from != null) 'from': from.toIso8601String(),
+        if (to != null) 'to': to.toIso8601String(),
+        if (facilityId != null) 'facilityId': facilityId,
+      },
+    );
+    final res = await _get(uri, headers: _headers());
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  Future<List<dynamic>> staffGetPeakHours({
+    DateTime? from,
+    DateTime? to,
+    String? facilityId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/staff/reports/peak-hours').replace(
+      queryParameters: {
+        if (from != null) 'from': from.toIso8601String(),
+        if (to != null) 'to': to.toIso8601String(),
+        if (facilityId != null) 'facilityId': facilityId,
+      },
+    );
+    final res = await _get(uri, headers: _headers());
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  Future<List<dynamic>> staffGetTopCourts({
+    DateTime? from,
+    DateTime? to,
+    int limit = 5,
+    String? facilityId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/staff/reports/top-courts').replace(
+      queryParameters: {
+        if (from != null) 'from': from.toIso8601String(),
+        if (to != null) 'to': to.toIso8601String(),
+        'limit': limit.toString(),
+        if (facilityId != null) 'facilityId': facilityId,
+      },
+    );
+    final res = await _get(uri, headers: _headers());
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  Future<Map<String, dynamic>> staffGetCancellations({
+    DateTime? from,
+    DateTime? to,
+    String? facilityId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/staff/reports/cancellations').replace(
+      queryParameters: {
+        if (from != null) 'from': from.toIso8601String(),
+        if (to != null) 'to': to.toIso8601String(),
+        if (facilityId != null) 'facilityId': facilityId,
+      },
+    );
+    final res = await _get(uri, headers: _headers());
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   // --- Auth APIs ---
   // --- Users (admin) ---
   Future<List<AppUser>> adminGetUsers({
