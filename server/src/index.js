@@ -3650,6 +3650,83 @@ app.get('/api/staff/facility', async (req, res, next) => {
   }
 });
 
+app.put('/api/staff/facility', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const $set = {};
+    const $unset = {};
+    const body = req.body || {};
+
+    if (body.name !== undefined) {
+      const trimmed = String(body.name).trim();
+      if (!trimmed.length) return res.status(400).json({ error: 'name cannot be empty' });
+      $set.name = trimmed;
+    }
+
+    if (body.timeZone !== undefined) {
+      const trimmed = String(body.timeZone).trim();
+      if (!trimmed.length) return res.status(400).json({ error: 'timeZone cannot be empty' });
+      $set.timeZone = trimmed;
+    }
+
+    if (body.active !== undefined) {
+      $set.active = !!body.active;
+    }
+
+    if (body.address !== undefined) {
+      if (body.address && typeof body.address === 'object') {
+        const safe = {};
+        for (const k of ['line1', 'ward', 'district', 'city', 'province', 'country', 'postalCode']) {
+          if (body.address[k] !== undefined) safe[k] = String(body.address[k]);
+        }
+        if (body.address.lat !== undefined) safe.lat = Number(body.address.lat);
+        if (body.address.lng !== undefined) safe.lng = Number(body.address.lng);
+        $set.address = safe;
+      } else {
+        $unset.address = '';
+      }
+    }
+
+    if (!Object.keys($set).length && !Object.keys($unset).length) {
+      return res.status(400).json({ error: 'No changes provided' });
+    }
+
+    $set.updatedAt = new Date();
+    const updateDoc = {};
+    if (Object.keys($set).length) updateDoc.$set = $set;
+    if (Object.keys($unset).length) updateDoc.$unset = $unset;
+
+    const result = await db.collection('facilities').findOneAndUpdate(
+      { _id: facilityId },
+      updateDoc,
+      { returnDocument: ReturnDocument.AFTER },
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ error: 'Facility not found' });
+    }
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.facility-update',
+      resource: 'facility',
+      resourceId: facilityId,
+      changes: sanitizeAuditData({ $set, $unset }),
+    });
+
+    res.json(sanitizeAuditData(result.value));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/staff/sports', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
@@ -3678,6 +3755,125 @@ app.get('/api/staff/sports', async (req, res, next) => {
 
     const sports = await db.collection('sports').find(filter).sort({ name: 1 }).toArray();
     res.json(sports.map((sport) => sanitizeAuditData(sport)));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff/sports', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const { name, code, teamSize, active = true } = req.body || {};
+    if (!name || !code || teamSize === undefined) {
+      return res.status(400).json({ error: 'name, code, teamSize required' });
+    }
+
+    const doc = {
+      name: String(name).trim(),
+      code: String(code).trim(),
+      teamSize: Number(teamSize),
+      active: !!active,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdByStaffId: staffUser._id,
+    };
+
+    const insert = await db.collection('sports').insertOne(doc);
+    const saved = await db.collection('sports').findOne({ _id: insert.insertedId });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.sport.create',
+      resource: 'sport',
+      resourceId: insert.insertedId,
+      payload: req.body,
+      changes: saved,
+    });
+
+    res.status(201).json(sanitizeAuditData(saved));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/staff/sports/:id', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const sport = await fetchSportById(req.params.id);
+    if (!sport) return res.status(404).json({ error: 'Sport not found' });
+
+    const { name, code, teamSize, active } = req.body || {};
+    const $set = { updatedAt: new Date() };
+
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed.length) return res.status(400).json({ error: 'name cannot be empty' });
+      $set.name = trimmed;
+    }
+
+    if (code !== undefined) {
+      const trimmed = String(code).trim();
+      if (!trimmed.length) return res.status(400).json({ error: 'code cannot be empty' });
+      $set.code = trimmed;
+    }
+
+    if (teamSize !== undefined) {
+      $set.teamSize = Number(teamSize);
+    }
+
+    if (active !== undefined) {
+      $set.active = !!active;
+    }
+
+    const updateOps = { $set };
+    const updated = await db.collection('sports').findOneAndUpdate(
+      { _id: sport._id },
+      updateOps,
+      { returnDocument: ReturnDocument.AFTER },
+    );
+
+    if (!updated.value) return res.status(404).json({ error: 'Sport not found' });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.sport.update',
+      resource: 'sport',
+      resourceId: sport._id,
+      payload: req.body,
+      changes: updated.value,
+    });
+
+    res.json(sanitizeAuditData(updated.value));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/staff/sports/:id', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const sport = await fetchSportById(req.params.id);
+    if (!sport) return res.status(404).json({ error: 'Sport not found' });
+
+    const result = await db.collection('sports').deleteOne({ _id: sport._id });
+    if (!result.deletedCount) return res.status(404).json({ error: 'Sport not found' });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.sport.delete',
+      resource: 'sport',
+      resourceId: sport._id,
+      payload: { id: req.params.id },
+      changes: { deleted: true },
+    });
+
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }
@@ -3728,6 +3924,136 @@ app.get('/api/staff/bookings', async (req, res, next) => {
 
     const bookings = await db.collection('bookings').aggregate(pipeline).toArray();
     res.json(bookings.map((doc) => shapeStaffBooking(doc)).filter(Boolean));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff/bookings', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) {
+      return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+    }
+
+    const body = req.body || {};
+    const sportId = coerceObjectId(body.sportId);
+    const courtId = coerceObjectId(body.courtId);
+    if (!sportId) return res.status(400).json({ error: 'sportId invalid' });
+    if (!courtId) return res.status(400).json({ error: 'courtId invalid' });
+
+    const court = await fetchCourtById(courtId);
+    if (!court) return res.status(404).json({ error: 'Court not found' });
+    if (!court.facilityId || String(court.facilityId) !== String(facilityId)) {
+      return res.status(403).json({ error: 'Court does not belong to your facility' });
+    }
+
+    const s = coerceDateValue(body.start);
+    const e = coerceDateValue(body.end);
+    if (!(s && e && s < e)) {
+      return res.status(400).json({ error: 'start and end must be valid and start < end' });
+    }
+
+    let customerId = coerceObjectId(body.customerId);
+    if (!customerId) {
+      const customer = body.customer && typeof body.customer === 'object' ? body.customer : {};
+      const doc = cleanObject({
+        role: 'customer',
+        status: 'active',
+        name: typeof customer.name === 'string' ? customer.name.trim() : undefined,
+        phone: typeof customer.phone === 'string' ? customer.phone.trim() : undefined,
+        email: typeof customer.email === 'string' ? customer.email.trim().toLowerCase() : undefined,
+        createdAt: new Date(),
+      });
+      const insertCustomer = await db.collection('users').insertOne(doc);
+      customerId = insertCustomer.insertedId;
+    }
+
+    const overlapExpr = { $or: [ { start: { $lt: e }, end: { $gt: s } } ] };
+    const conflict = await db.collection('bookings').findOne({
+      courtId,
+      ...overlapExpr,
+      status: { $in: ['pending', 'confirmed', 'completed'] },
+    });
+    const maintenance = await db.collection('maintenance').findOne({
+      courtId,
+      ...overlapExpr,
+    });
+    if (conflict || maintenance) {
+      return res.status(409).json({ error: 'Court not available for the requested time' });
+    }
+
+    const quote = await quotePrice({
+      db,
+      facilityId: facilityId.toHexString(),
+      sportId: sportId.toHexString(),
+      courtId: courtId.toHexString(),
+      start: s,
+      end: e,
+      currency: typeof body.currency === 'string' ? body.currency : 'VND',
+      user: await db.collection('users').findOne({ _id: customerId }),
+    });
+
+    const participants = Array.isArray(body.participants)
+      ? body.participants
+          .map((x) => String(x).trim())
+          .filter((x) => ObjectId.isValid(x))
+          .map((x) => new ObjectId(x))
+      : [];
+
+    const status = body.confirm ? 'confirmed' : 'pending';
+    const doc = cleanObject({
+      customerId,
+      facilityId,
+      courtId,
+      sportId,
+      start: s,
+      end: e,
+      status,
+      currency: typeof body.currency === 'string' ? body.currency : 'VND',
+      participants,
+      pricingSnapshot: quote,
+      contactMethod: typeof body.contactMethod === 'string' ? body.contactMethod.trim() : undefined,
+      note: typeof body.note === 'string' ? body.note.trim() : undefined,
+      createdAt: new Date(),
+      createdByStaffId: staffUser._id,
+    });
+
+    const insert = await db.collection('bookings').insertOne(doc);
+    const createdBooking = { _id: insert.insertedId, ...doc };
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.booking.create',
+      resource: 'booking',
+      resourceId: insert.insertedId,
+      payload: body,
+      changes: createdBooking,
+    });
+
+    if (status === 'confirmed') {
+      try {
+        await ensureBookingInvoice(createdBooking);
+      } catch (invoiceError) {
+        console.error('Failed to ensure invoice for staff booking', insert.insertedId, invoiceError);
+      }
+    }
+
+    const shaped = await db.collection('bookings').aggregate([
+      { $match: { _id: insert.insertedId } },
+      { $lookup: { from: 'users', localField: 'customerId', foreignField: '_id', as: 'customer' } },
+      { $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'courts', localField: 'courtId', foreignField: '_id', as: 'court' } },
+      { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'sports', localField: 'sportId', foreignField: '_id', as: 'sport' } },
+      { $unwind: { path: '$sport', preserveNullAndEmptyArrays: true } },
+      { $limit: 1 },
+    ]).toArray();
+
+    res.status(201).json(shapeStaffBooking(shaped[0]));
   } catch (error) {
     next(error);
   }
@@ -3832,6 +4158,192 @@ app.patch('/api/staff/bookings/:id/status', async (req, res, next) => {
   }
 });
 
+app.post('/api/staff/courts/:id/maintenance', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const court = await fetchCourtById(req.params.id);
+    if (!court) return res.status(404).json({ error: 'Court not found' });
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId || String(court.facilityId) !== String(facilityId)) {
+      return res.status(403).json({ error: 'Court does not belong to your facility' });
+    }
+
+    const start = coerceDateValue(req.body?.start);
+    const end = coerceDateValue(req.body?.end);
+    if (!(start && end && start < end)) {
+      return res.status(400).json({ error: 'start and end must be valid and start < end' });
+    }
+
+    const overlapExpr = { $or: [ { start: { $lt: end }, end: { $gt: start } } ] };
+    const conflict = await db.collection('bookings').findOne({
+      courtId: court._id,
+      ...overlapExpr,
+      status: { $in: ['pending', 'confirmed', 'completed'] },
+    });
+    const maintenanceConflict = await db.collection('maintenance').findOne({ courtId: court._id, ...overlapExpr });
+    if (conflict || maintenanceConflict) {
+      return res.status(409).json({ error: 'Court not available for the requested time' });
+    }
+
+    const doc = cleanObject({
+      courtId: court._id,
+      facilityId,
+      start,
+      end,
+      reason: typeof req.body?.reason === 'string' ? req.body.reason.trim() : undefined,
+      status: 'scheduled',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdByStaffId: staffUser._id,
+    });
+
+    const insert = await db.collection('maintenance').insertOne(doc);
+    const saved = { _id: insert.insertedId, ...doc };
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.maintenance.create',
+      resource: 'maintenance',
+      resourceId: insert.insertedId,
+      payload: req.body,
+      changes: saved,
+    });
+
+    res.status(201).json(sanitizeAuditData(saved));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/staff/maintenance/:id', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const maintenanceId = coerceObjectId(req.params.id);
+    if (!maintenanceId) return res.status(404).json({ error: 'Maintenance not found' });
+
+    const maintenanceDoc = await db.collection('maintenance').findOne({ _id: maintenanceId });
+    if (!maintenanceDoc) return res.status(404).json({ error: 'Maintenance not found' });
+
+    const court = await fetchCourtById(maintenanceDoc.courtId);
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!court || !facilityId || String(court.facilityId) !== String(facilityId)) {
+      return res.status(403).json({ error: 'Not authorized for this maintenance' });
+    }
+
+    const $set = { updatedAt: new Date() };
+    const { start, end, reason, status } = req.body || {};
+
+    const nextStart = start !== undefined ? coerceDateValue(start) : maintenanceDoc.start;
+    const nextEnd = end !== undefined ? coerceDateValue(end) : maintenanceDoc.end;
+    if (!(nextStart instanceof Date && nextEnd instanceof Date && nextStart < nextEnd)) {
+      return res.status(400).json({ error: 'start and end must be valid and start < end' });
+    }
+    $set.start = nextStart;
+    $set.end = nextEnd;
+
+    if (reason !== undefined) {
+      $set.reason = typeof reason === 'string' ? reason.trim() : undefined;
+    }
+    if (status !== undefined) {
+      $set.status = String(status).trim();
+    }
+
+    const overlapExpr = { $or: [ { start: { $lt: nextEnd }, end: { $gt: nextStart } } ] };
+    const conflict = await db.collection('bookings').findOne({
+      courtId: court._id,
+      ...overlapExpr,
+      status: { $in: ['pending', 'confirmed', 'completed'] },
+    });
+    const maintenanceConflict = await db.collection('maintenance').findOne({
+      _id: { $ne: maintenanceDoc._id },
+      courtId: court._id,
+      ...overlapExpr,
+    });
+    if (conflict || maintenanceConflict) {
+      return res.status(409).json({ error: 'Court not available for the requested time' });
+    }
+
+    const result = await db.collection('maintenance').findOneAndUpdate(
+      { _id: maintenanceDoc._id },
+      { $set },
+      { returnDocument: ReturnDocument.AFTER },
+    );
+
+    if (!result.value) return res.status(404).json({ error: 'Maintenance not found' });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.maintenance.update',
+      resource: 'maintenance',
+      resourceId: maintenanceDoc._id,
+      payload: req.body,
+      changes: result.value,
+    });
+
+    res.json(sanitizeAuditData(result.value));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff/maintenance/:id/action', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const maintenanceId = coerceObjectId(req.params.id);
+    if (!maintenanceId) return res.status(404).json({ error: 'Maintenance not found' });
+    const doc = await db.collection('maintenance').findOne({ _id: maintenanceId });
+    if (!doc) return res.status(404).json({ error: 'Maintenance not found' });
+
+    const court = await fetchCourtById(doc.courtId);
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!court || !facilityId || String(court.facilityId) !== String(facilityId)) {
+      return res.status(403).json({ error: 'Not authorized for this maintenance' });
+    }
+
+    const action = typeof req.body?.action === 'string' ? req.body.action.trim().toLowerCase() : '';
+    if (!action) return res.status(400).json({ error: 'action required' });
+
+    const $set = { updatedAt: new Date() };
+    if (action === 'start') {
+      $set.status = 'in_progress';
+      $set.startedAt = new Date();
+    } else if (action === 'complete' || action === 'completed') {
+      $set.status = 'completed';
+      $set.completedAt = new Date();
+    } else if (action === 'cancel' || action === 'cancelled') {
+      $set.status = 'cancelled';
+      $set.cancelledAt = new Date();
+    } else {
+      return res.status(400).json({ error: 'Unsupported action' });
+    }
+
+    const result = await db.collection('maintenance').findOneAndUpdate(
+      { _id: doc._id },
+      { $set },
+      { returnDocument: ReturnDocument.AFTER },
+    );
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: `staff.maintenance.${action}`,
+      resource: 'maintenance',
+      resourceId: doc._id,
+      payload: req.body,
+      changes: result.value,
+    });
+
+    res.json(sanitizeAuditData(result.value));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/staff/invoices', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
@@ -3919,6 +4431,78 @@ app.get('/api/staff/invoices', async (req, res, next) => {
     });
 
     res.json({ invoices: shaped, summary });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff/invoices/:id/remind', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const invoiceCandidates = buildIdCandidates(req.params.id);
+    if (!invoiceCandidates.length) {
+      return res.status(404).json({ error: 'Hoá đơn không tồn tại' });
+    }
+
+    const invoiceDoc = await db.collection('invoices').findOne({ _id: { $in: invoiceCandidates } });
+    if (!invoiceDoc) return res.status(404).json({ error: 'Hoá đơn không tồn tại' });
+
+    const bookingId = coerceObjectId(invoiceDoc.bookingId);
+    if (!bookingId) return res.status(404).json({ error: 'Hoá đơn không hợp lệ' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+
+    const bookingDoc = await db.collection('bookings').findOne({ _id: bookingId, facilityId });
+    if (!bookingDoc) return res.status(404).json({ error: 'Hoá đơn không tồn tại' });
+
+    const customerId = coerceObjectId(bookingDoc.customerId);
+    if (customerId) {
+      await createNotifications({
+        userIds: [customerId],
+        title: 'Nhắc thanh toán',
+        message: req.body?.note || 'Vui lòng thanh toán hoá đơn đặt sân',
+        data: {
+          invoiceId: normalizeIdString(invoiceDoc._id),
+          bookingId: normalizeIdString(bookingDoc._id),
+          type: 'invoice-reminder',
+        },
+      });
+    }
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.invoice.remind',
+      resource: 'invoice',
+      resourceId: invoiceDoc._id,
+      payload: req.body,
+    });
+
+    const shaped = await db.collection('invoices').aggregate([
+      { $match: { _id: invoiceDoc._id } },
+      {
+        $lookup: {
+          from: 'bookings',
+          let: { bookingId: '$bookingId' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$bookingId'] } } },
+            { $match: { facilityId } },
+          ],
+          as: 'booking',
+        },
+      },
+      { $unwind: { path: '$booking', preserveNullAndEmptyArrays: false } },
+      { $lookup: { from: 'users', localField: 'booking.customerId', foreignField: '_id', as: 'customer' } },
+      { $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'courts', localField: 'booking.courtId', foreignField: '_id', as: 'court' } },
+      { $unwind: { path: '$court', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'payments', localField: '_id', foreignField: 'invoiceId', as: 'payments' } },
+      { $limit: 1 },
+    ]).toArray();
+
+    res.json(shapeStaffInvoice(shaped[0]));
   } catch (error) {
     next(error);
   }
@@ -4951,6 +5535,41 @@ app.get('/api/staff/customers', async (req, res, next) => {
   }
 });
 
+app.post('/api/staff/customers/:id/messages', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const customerId = coerceObjectId(req.params.id);
+    if (!customerId) return res.status(404).json({ error: 'Customer not found' });
+
+    const customer = await db.collection('users').findOne({ _id: customerId });
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    if (!message.length) return res.status(400).json({ error: 'message is required' });
+
+    await createNotifications({
+      userIds: [customerId],
+      title: 'Tin nhắn từ nhân viên',
+      message,
+      data: { type: 'staff-message', staffId: normalizeIdString(staffUser._id) },
+    });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.customer.message',
+      resource: 'user',
+      resourceId: customerId,
+      payload: { message },
+    });
+
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/staff/notifications', async (req, res, next) => {
   try {
     const staffUser = await fetchStaffUser(req);
@@ -5437,6 +6056,128 @@ app.delete('/api/staff/courts/:id', async (req, res, next) => {
     });
 
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/staff/courts', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId) return res.status(403).json({ error: 'Staff user is not assigned to any facility' });
+
+    const { sportId, name, code, status = 'active' } = req.body || {};
+    if (!sportId || !name) return res.status(400).json({ error: 'sportId and name are required' });
+    if (!COURT_ALLOWED_STATUSES.has(String(status))) {
+      return res.status(400).json({ error: 'Invalid court status' });
+    }
+
+    const sport = await fetchSportById(sportId);
+    if (!sport) return res.status(404).json({ error: 'Sport not found' });
+
+    const doc = {
+      facilityId,
+      sportId: sport._id,
+      name: String(name).trim(),
+      status: String(status),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdByStaffId: staffUser._id,
+    };
+    if (code !== undefined) {
+      const trimmed = String(code).trim();
+      if (trimmed.length) doc.code = trimmed;
+    }
+
+    const insert = await db.collection('courts').insertOne(doc);
+    const saved = await db.collection('courts').findOne({ _id: insert.insertedId });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.court.create',
+      resource: 'court',
+      resourceId: insert.insertedId,
+      payload: req.body,
+      changes: saved,
+    });
+
+    res.status(201).json(saved);
+  } catch (e) { next(e); }
+});
+
+app.put('/api/staff/courts/:id', async (req, res, next) => {
+  try {
+    const staffUser = await fetchStaffUser(req);
+    if (!staffUser) return res.status(401).json({ error: 'Unauthenticated' });
+
+    const court = await fetchCourtById(req.params.id);
+    if (!court) return res.status(404).json({ error: 'Not found' });
+
+    const facilityId = coerceObjectId(staffUser.facilityId);
+    if (!facilityId || String(court.facilityId) !== String(facilityId)) {
+      return res.status(403).json({ error: 'Not authorized for this court' });
+    }
+
+    const { name, code, sportId, status } = req.body || {};
+    const $set = { updatedAt: new Date() };
+    const $unset = {};
+
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed.length) return res.status(400).json({ error: 'name cannot be empty' });
+      $set.name = trimmed;
+    }
+
+    if (code !== undefined) {
+      const trimmed = String(code).trim();
+      if (trimmed.length) {
+        $set.code = trimmed;
+      } else {
+        $unset.code = '';
+      }
+    }
+
+    if (sportId !== undefined) {
+      const sport = await fetchSportById(sportId);
+      if (!sport) return res.status(404).json({ error: 'Sport not found' });
+      $set.sportId = sport._id;
+    }
+
+    if (status !== undefined) {
+      const statusValue = String(status);
+      if (!COURT_ALLOWED_STATUSES.has(statusValue)) {
+        return res.status(400).json({ error: 'Invalid court status' });
+      }
+      $set.status = statusValue;
+    }
+
+    const updateOps = {};
+    if (Object.keys($set).length) updateOps.$set = $set;
+    if (Object.keys($unset).length) updateOps.$unset = $unset;
+
+    if (!Object.keys(updateOps).length) {
+      return res.status(400).json({ error: 'No updates provided' });
+    }
+
+    const result = await db.collection('courts').findOneAndUpdate(
+      { _id: court._id },
+      updateOps,
+      { returnDocument: ReturnDocument.AFTER },
+    );
+
+    if (!result.value) return res.status(404).json({ error: 'Not found' });
+
+    await recordAudit(req, {
+      actorId: staffUser._id,
+      action: 'staff.court.update',
+      resource: 'court',
+      resourceId: court._id,
+      payload: req.body,
+      changes: result.value,
+    });
+
+    res.json(result.value);
   } catch (e) { next(e); }
 });
 

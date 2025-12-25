@@ -160,7 +160,13 @@ class _LoginPageState extends State<LoginPage> {
                     Center(
                       child: Hero(
                         tag: 'auth-brand',
-                        child: _buildLogoHeader(theme),
+                        child: SizedBox(
+                          width: 200,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: _buildLogoHeader(theme),
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 20),

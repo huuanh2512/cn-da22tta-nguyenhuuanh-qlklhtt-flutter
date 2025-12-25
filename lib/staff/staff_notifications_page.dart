@@ -956,11 +956,12 @@ class _NotificationCard extends StatelessWidget {
                         ? theme.colorScheme.outline
                         : theme.colorScheme.primary,
                   ),
-                  _StatusChip(
-                    label: priorityLabel,
-                    color: priorityColor,
-                    icon: Icons.flag_outlined,
-                  ),
+                  if (!isImportant && priorityLabel != 'Thông thường')
+                    _StatusChip(
+                      label: priorityLabel,
+                      color: priorityColor,
+                      icon: Icons.flag_outlined,
+                    ),
                   if (notification.channel != null &&
                       notification.channel!.isNotEmpty)
                     _StatusChip(
