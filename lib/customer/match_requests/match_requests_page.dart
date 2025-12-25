@@ -3647,19 +3647,26 @@ class _MatchRequestsPageState extends State<MatchRequestsPage> {
                 children: [
                   const Icon(Icons.sports_martial_arts_outlined, size: 18, color: Colors.black),
                   const SizedBox(width: 8),
-                  Text(
-                    'Trình độ ${request.skillMin ?? 0} - ${request.skillMax ?? 100}',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Text(
+                      'Trình độ ${request.skillMin ?? 0} - ${request.skillMax ?? 100}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const Spacer(),
                   const Icon(Icons.groups_outlined, size: 18, color: Colors.black),
                   const SizedBox(width: 8),
-                  Text(
-                    participantText,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+                  Flexible(
+                    child: Text(
+                      participantText,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      maxLines: 1,
                     ),
                   ),
                 ],

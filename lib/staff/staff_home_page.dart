@@ -1026,7 +1026,13 @@ class _StaffHomePageState extends State<StaffHomePage> {
                       ],
                     ),
                   ),
-                  statusChips,
+                  Flexible(
+                    fit: FlexFit.loose,
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: statusChips,
+                    ),
+                  ),
                   const SizedBox(width: 4),
                   PopupMenuButton<String>(
                     tooltip: 'Tuỳ chọn sân',

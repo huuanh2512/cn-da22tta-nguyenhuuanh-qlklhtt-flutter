@@ -854,7 +854,7 @@ class ApiService {
     return Maintenance.fromJson(data);
   }
 
-  Future<Maintenance> staffMaintenanceAction(String id, String action) async {
+  Future<void> staffMaintenanceAction(String id, String action) async {
     final clean = action.trim();
     if (clean.isEmpty) {
       throw Exception('Thiáº¿u loáº¡i thao tÃ¡c');
@@ -867,8 +867,10 @@ class ApiService {
     if (res.statusCode != 200) {
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     }
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    return Maintenance.fromJson(data);
+    // Some deployments may return an empty body; nothing else to parse is needed.
+    if (res.body.isNotEmpty) {
+      jsonDecode(res.body);
+    }
   }
 
   Future<List<Sport>> staffGetSports({bool includeInactive = false}) async {
